@@ -1,0 +1,14 @@
+{
+  "name": "patient_summary_connector",
+  "description": "Summarizes patient medical records",
+  "version": "1.0",
+  "tools": [
+    {
+      "name": "get_patient_summary",
+      "description": "Fetches a patient’s summary by patient ID",
+      "input_schema": {
+        "$ref": "./tools/get_patient_summary/tool_schema.json"
+      }
+    }
+  ]
+}

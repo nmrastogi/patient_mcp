@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "patient_id": {
+      "type": "string",
+      "description": "Unique identifier for the patient"
+    }
+  },
+  "required": ["patient_id"]
+}
