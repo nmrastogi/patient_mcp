@@ -1,23 +1,28 @@
-def fetch_patient_summary(patient_id: str) -> dict:
-    # Example mocked data
-    patient_db = {
-        "12345": {
-            "name": "John Doe",
-            "age": 70,
-            "diagnosis": "Type 2 Diabetes, Hypertension",
-            "medications": ["Metformin", "Amlodipine"],
-            "last_visit": "2025-06-20"
-        }
-    }
+import pandas as pd
 
-    patient = patient_db.get(patient_id)
-    if not patient:
-        return {"summary": f"No data found for patient ID {patient_id}"}
+# Load only the necessary columns
+PATIENT_DATA = pd.read_csv(
+    "patients.csv",header=1,skiprows=range(1,6),nrows=8620, 
+    usecols=['SerialNumber', 'EventDateTime', 'Readings (mg/dL)']
+)
+
+def fetch_patient_summary(serial_number: str) -> dict:
+    """
+    Summarizes readings for a given SerialNumber from loaded CSV data.
+    """
+    patient_data = PATIENT_DATA[PATIENT_DATA['SerialNumber'] == serial_number]
+
+    if patient_data.empty:
+        return {"summary": f"No data found for SerialNumber {serial_number}"}
+
+    num_readings = len(patient_data)
+    avg_reading = patient_data['Readings (mg/dL)'].mean()
+    latest_reading = patient_data.sort_values('EventDateTime', ascending=False).iloc[0]
 
     summary = (
-        f"Patient {patient['name']} (age {patient['age']}) last visited on {patient['last_visit']}. "
-        f"Diagnosed with: {patient['diagnosis']}. "
-        f"Current medications: {', '.join(patient['medications'])}."
+        f"SerialNumber {serial_number} has {num_readings} readings. "
+        f"Average reading: {avg_reading:.2f} mg/dL. "
+        f"Most recent reading: {latest_reading['Readings (mg/dL)']} mg/dL on {latest_reading['EventDateTime']}."
     )
 
     return {"summary": summary}
