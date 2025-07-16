@@ -37,31 +37,20 @@ def test_server_manually():
                 }
             }
         }
-        
         process.stdin.write(json.dumps(init_msg) + "\n")
         process.stdin.flush()
-        
-        # Wait a moment for response
         time.sleep(1)
         
         # Test 2: List tools
         print("2. Requesting tools list...")
         tools_msg = {
             "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "get_patient_summary",
-                "arguments": {
-                "patient_id": "1260244",
-                "mode": "raw"
+            "id": 2,
+            "method": "tools/list",
+            "params": {}
         }
-    }
-}
-        
         process.stdin.write(json.dumps(tools_msg) + "\n")
         process.stdin.flush()
-        
         time.sleep(1)
         
         # Test 3: Call the tool
@@ -73,37 +62,35 @@ def test_server_manually():
             "params": {
                 "name": "get_patient_summary",
                 "arguments": {
-                    "patient_id": "12345"
+                    "patient_id": 1260244  # your actual SerialNumber
                 }
             }
         }
-        
         process.stdin.write(json.dumps(tool_msg) + "\n")
         process.stdin.flush()
-        
         time.sleep(2)
         
         # Try to read any output
         print("4. Checking for responses...")
-        
-        # Check if process is still running
+        stdout_output = process.stdout.read()
+        print("Server output:")
+        print(stdout_output)
+
         if process.poll() is None:
-            print("✓ Server is running and accepting messages")
+            print("✓ Server is running and accepted messages")
         else:
-            print("❌ Server stopped")
-            
-        # Check stderr for any errors
+            print("❌ Server stopped unexpectedly")
+
         stderr_output = process.stderr.read()
         if stderr_output:
             print(f"Server errors: {stderr_output}")
         else:
             print("✓ No errors in stderr")
-            
+
     except Exception as e:
         print(f"Error during test: {e}")
-        
+    
     finally:
-        # Clean up
         process.terminate()
         process.wait()
 
