@@ -1,7 +1,7 @@
 from patient_data import fetch_patient_summary
 
 def test_valid_serial_number():
-    serial_number = "1260244"  # Replace with actual SerialNumber from your CSV
+    serial_number = 1260244  # Replace with actual SerialNumber from your CSV
     result = fetch_patient_summary(serial_number)
     print(result)
     assert "summary" in result
