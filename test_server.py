@@ -1,11 +1,12 @@
 from patient_data import fetch_patient_summary
 
 def test_valid_serial_number():
-    serial_number = 1260244  # Replace with actual SerialNumber from your CSV
+    serial_number = 1260244  # or as str if needed
     result = fetch_patient_summary(serial_number)
     print(result)
-    assert "summary" in result
-    assert f"SerialNumber {serial_number}" in result["summary"]
+    assert "readings" in result
+    assert isinstance(result["readings"], list)
+    assert len(result["readings"]) > 0
 
 def test_invalid_serial_number():
     serial_number = "NON_EXISTENT_SN"
