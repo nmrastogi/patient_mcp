@@ -47,7 +47,7 @@ def test_server_manually():
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/list",
-            "params": {}
+            # "params": {}
         }
         process.stdin.write(json.dumps(tools_msg) + "\n")
         process.stdin.flush()

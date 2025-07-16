@@ -6,7 +6,7 @@ PATIENT_DATA = pd.read_csv(
     usecols=['SerialNumber', 'EventDateTime', 'Readings (mg/dL)']
 )
 
-def fetch_patient_summary(serial_number: str) -> dict:
+def fetch_patient_summary(serial_number: int) -> dict:
     """
     Returns raw readings for a given SerialNumber from loaded CSV data.
     """
