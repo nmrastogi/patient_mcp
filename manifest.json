@@ -7,7 +7,7 @@
       "name": "get_patient_summary",
       "description": "Fetches a patient’s summary by patient ID",
       "input_schema": {
-        "$ref": "./tools/get_patient_summary/tool_schema.json"
+        "$ref": "./tools/get_patient_summary/tools_schema.json"
       }
     }
   ]
