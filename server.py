@@ -5,7 +5,7 @@ from patient_data import fetch_patient_summary
 mcp = FastMCP(name="PatientSummaryServer")
 
 @mcp.tool()
-def get_patient_summary(patient_id: str) -> dict:
+def get_patient_summary(patient_id: int) -> dict:
 
     return fetch_patient_summary(patient_id)
 

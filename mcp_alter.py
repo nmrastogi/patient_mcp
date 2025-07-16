@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test your server manually
+Test your MCP server manually
 """
 
 import subprocess
@@ -9,10 +9,10 @@ import json
 import time
 
 def test_server_manually():
-    """Test the server by sending JSON-RPC messages directly"""
+    """Test the MCP server by sending JSON-RPC messages directly"""
     print("=== Testing MCP Server Manually ===")
     
-    # Start the server
+    # Start the MCP server
     process = subprocess.Popen(
         [sys.executable, "server.py"],
         stdin=subprocess.PIPE,
@@ -22,7 +22,7 @@ def test_server_manually():
     )
     
     try:
-        # Test 1: Send initialization message
+        # Step 1: Initialize the server
         print("1. Sending initialization message...")
         init_msg = {
             "jsonrpc": "2.0",
@@ -40,8 +40,8 @@ def test_server_manually():
         process.stdin.write(json.dumps(init_msg) + "\n")
         process.stdin.flush()
         time.sleep(1)
-        
-        # Test 2: List tools
+
+        # Step 2: List available tools
         print("2. Requesting tools list...")
         tools_msg = {
             "jsonrpc": "2.0",
@@ -52,8 +52,8 @@ def test_server_manually():
         process.stdin.write(json.dumps(tools_msg) + "\n")
         process.stdin.flush()
         time.sleep(1)
-        
-        # Test 3: Call the tool
+
+        # Step 3: Call the get_patient_summary tool
         print("3. Calling get_patient_summary tool...")
         tool_msg = {
             "jsonrpc": "2.0",
@@ -62,19 +62,21 @@ def test_server_manually():
             "params": {
                 "name": "get_patient_summary",
                 "arguments": {
-                    "patient_id": 1260244  # your actual SerialNumber
+                    "patient_id": 1260244  # Replace with your actual SerialNumber
                 }
             }
         }
         process.stdin.write(json.dumps(tool_msg) + "\n")
         process.stdin.flush()
         time.sleep(2)
-        
-        # Try to read any output
+
+        # Step 4: Read and display server responses
         print("4. Checking for responses...")
-        stdout_output = process.stdout.read()
-        print("Server output:")
-        print(stdout_output)
+        for _ in range(5):  # Read up to 5 lines of output
+            output_line = process.stdout.readline()
+            if output_line:
+                print(output_line.strip())
+            time.sleep(0.5)
 
         if process.poll() is None:
             print("✓ Server is running and accepted messages")
