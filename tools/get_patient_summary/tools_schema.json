@@ -2,8 +2,8 @@
   "type": "object",
   "properties": {
     "patient_id": {
-      "type": "string",
-      "description": "Unique identifier for the patient"
+      "type": "integer",
+      "description": "Unique identifier for the patient (SerialNumber)"
     }
   },
   "required": ["patient_id"]

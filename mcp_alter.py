@@ -48,10 +48,16 @@ def test_server_manually():
         print("2. Requesting tools list...")
         tools_msg = {
             "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "get_patient_summary",
+                "arguments": {
+                "patient_id": "1260244",
+                "mode": "raw"
         }
+    }
+}
         
         process.stdin.write(json.dumps(tools_msg) + "\n")
         process.stdin.flush()
