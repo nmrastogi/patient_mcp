@@ -41,20 +41,29 @@ def test_server_manually():
         process.stdin.flush()
         time.sleep(1)
 
-        # Step 2: List available tools
-        print("2. Requesting tools list...")
+        # Step 2: Send initialized notification
+        print("2. Sending initialized notification...")
+        initialized_msg = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }
+        process.stdin.write(json.dumps(initialized_msg) + "\n")
+        process.stdin.flush()
+        time.sleep(0.5)
+
+        # Step 3: List available tools
+        print("3. Requesting tools list...")
         tools_msg = {
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/list",
-            # "params": {}
         }
         process.stdin.write(json.dumps(tools_msg) + "\n")
         process.stdin.flush()
         time.sleep(1)
 
-        # Step 3: Call the get_patient_summary tool
-        print("3. Calling get_patient_summary tool...")
+        # Step 4: Call the get_patient_summary tool
+        print("4. Calling get_patient_summary tool...")
         tool_msg = {
             "jsonrpc": "2.0",
             "id": 3,
@@ -70,8 +79,8 @@ def test_server_manually():
         process.stdin.flush()
         time.sleep(2)
 
-        # Step 4: Read and display server responses
-        print("4. Checking for responses...")
+        # Step 5: Read and display server responses
+        print("5. Checking for responses...")
         for _ in range(5):  # Read up to 5 lines of output
             output_line = process.stdout.readline()
             if output_line:
