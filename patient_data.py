@@ -11,7 +11,7 @@ def fetch_patient_summary(patient_id: Union[int, str]) -> dict:
     """
     Returns raw readings for a given SerialNumber from loaded CSV data.
     """
-    serial_number = str(patient_id)  # Convert to string for lookup
+    serial_number = int(patient_id)  # Convert to string for lookup
     patient_data = PATIENT_DATA[PATIENT_DATA['SerialNumber'] == serial_number]
 
     if patient_data.empty:
