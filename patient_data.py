@@ -7,22 +7,50 @@ PATIENT_DATA = pd.read_csv(
     usecols=['SerialNumber', 'EventDateTime', 'Readings (mg/dL)']
 )
 
-def fetch_patient_summary(patient_id: Union[int, str]) -> dict:
+def fetch_patient_summary(patient_id: Union[int, str], start_date: str = None, end_date: str = None) -> dict:
     """
-    Returns raw readings for a given SerialNumber from loaded CSV data.
+    Returns filtered readings for a given SerialNumber and optional date range.
     """
-    serial_number = int(patient_id)  # Convert to string for lookup
+    try:
+        serial_number = int(patient_id)
+    except (ValueError, TypeError):
+        return {"summary": f"Invalid patient ID format: {patient_id}"}
+    
     patient_data = PATIENT_DATA[PATIENT_DATA['SerialNumber'] == serial_number]
 
     if patient_data.empty:
         return {"summary": f"No data found for SerialNumber {serial_number}"}
 
+    # Convert EventDateTime to datetime if not already
+    patient_data = patient_data.copy()
+    patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'])
+    
+    # Apply date filtering if provided
+    if start_date and end_date:
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # Include end date
+        patient_data = patient_data[
+            (patient_data['EventDateTime'] >= start_dt) & 
+            (patient_data['EventDateTime'] < end_dt)
+        ]
+        
+        if patient_data.empty:
+            return {"summary": f"No data found for SerialNumber {serial_number} between {start_date} and {end_date}"}
+
     # Convert dataframe to list of dicts
     readings = patient_data[['EventDateTime', 'Readings (mg/dL)']].to_dict(orient='records')
+    
+    # Format dates
+    for reading in readings:
+        reading['EventDateTime'] = reading['EventDateTime'].isoformat()
 
+    date_info = f" from {start_date} to {end_date}" if start_date and end_date else ""
+    
     return {
         "serial_number": serial_number,
-        "readings": readings
+        "date_range": date_info,
+        "readings": readings,
+        "total_readings": len(readings)
     }
 
 # Add this at the very end of your patient_data.py file

@@ -11,12 +11,18 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP(name="PatientSummaryServer")
 
 @mcp.tool()
-def get_patient_summary(patient_id: int) -> dict:
+def get_patient_summary(patient_id: int, start_date: str = None, end_date: str = None) -> dict:
+    """
+    Retrieve patient summary with optional date filtering.
+    
+    Args:
+        patient_id (int): Patient identifier 
+        start_date (str): Optional start date (YYYY-MM-DD format)
+        end_date (str): Optional end date (YYYY-MM-DD format)
+    """
     try:
-        logger.info(f"Received patient_id: {patient_id}")
-        result = fetch_patient_summary(patient_id)
-        if "error" not in result:
-            logger.info(f"Successfully processed patient {patient_id}")
+        logger.info(f"Received patient_id: {patient_id}, dates: {start_date} to {end_date}")
+        result = fetch_patient_summary(patient_id, start_date, end_date)
         return result
     except Exception as e:
         logger.error(f"Error processing patient {patient_id}: {e}")
