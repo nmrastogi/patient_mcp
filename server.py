@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(sys.stde
 logger = logging.getLogger(__name__)
 
 # Initialize the MCP server
-mcp = FastMCP(name="PatientSummaryServer")
+mcp = FastMCP(name="DiabetesMonitoringServer")
 
 @mcp.tool()
 def get_patient_summary(patient_id: int, start_date: str = None, end_date: str = None) -> dict:
