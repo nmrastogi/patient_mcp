@@ -128,7 +128,7 @@ def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int 
         "anomalous_events": anomalies
     }
 
-def find_last_hypoglycemic_event(patient_id: Union[int, str], glucose_threshold: float = 70) -> dict:
+def find_last_hypoglycemic_event(patient_id: Union[int, str], glucose_threshold: float = 60) -> dict:
     """
     Find the most recent hypoglycemic event and analyze recovery.
     """
