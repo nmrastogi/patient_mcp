@@ -211,7 +211,8 @@ def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int 
         if not patient_data.empty:
             # Parse timestamps and filter by date
             patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
-            cutoff_date = pd.Timestamp.now(tz='UTC') - timedelta(days=days_back)
+            latest_date = patient_data['EventDateTime'].max()
+            cutoff_date = latest_date - timedelta(days=days_back)
             patient_data = patient_data[patient_data['EventDateTime'] >= cutoff_date]
         
     except Exception as e:
@@ -394,7 +395,8 @@ def analyze_glucose_patterns(patient_id: Union[int, str], analysis_days: int = 1
         if not patient_data.empty:
             # Parse timestamps and filter by date
             patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
-            cutoff_date = pd.Timestamp.now(tz='UTC') - timedelta(days=analysis_days)
+            latest_date = patient_data['EventDateTime'].max()
+            cutoff_date = latest_date - timedelta(days=analysis_days)
             patient_data = patient_data[patient_data['EventDateTime'] >= cutoff_date]
         
     except Exception as e:
