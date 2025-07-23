@@ -58,19 +58,19 @@ def load_json_data(json_file_path: str = "TidepoolExport_jan25_july25.json") -> 
             if data_type == 'cbg':  # Continuous glucose monitor
                 record['glucose_value'] = row.get('value')
                 record['data_source'] = 'cgm'
-                record['SerialNumber'] = row.get('deviceSerialNumber', 'unknown')
+                record['SerialNumber'] = 'patient_001'
             elif data_type == 'smbg':  # Self-monitored blood glucose
                 record['glucose_value'] = row.get('value')
                 record['data_source'] = 'fingerstick'
-                record['SerialNumber'] = row.get('deviceSerialNumber', 'unknown')
+                record['SerialNumber'] = 'patient_001'
             
             # Process insulin data
             elif data_type == 'bolus':
                 record['insulin_bolus'] = row.get('normal', 0) + row.get('extended', 0)
-                record['SerialNumber'] = row.get('deviceSerialNumber', 'unknown')
+                record['SerialNumber'] = 'patient_001'
             elif data_type == 'basal':
                 record['insulin_basal_rate'] = row.get('rate', 0)
-                record['SerialNumber'] = row.get('deviceSerialNumber', 'unknown')
+                record['SerialNumber'] = 'patient_001'
             
             # Add standardized timestamp
             record['EventDateTime'] = row.get('time')
@@ -204,27 +204,20 @@ def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int 
     
     try:
         patient_id_str = str(patient_id)
-        
-        # Get recent data
+    
+    # Get recent data
         cutoff_date = datetime.now() - timedelta(days=days_back)
-        
-        # Handle timestamp parsing robustly
-        try:
-            event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='ISO8601')
-        except:
-            try:
-                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='mixed')
-            except:
-                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], utc=True)
-        
-        patient_data = PATIENT_DATA[
-            ((PATIENT_DATA['SerialNumber'].astype(str) == patient_id_str) |
-             (PATIENT_DATA['SerialNumber'] == patient_id)) & 
-            (event_times >= cutoff_date)
-        ].copy()
-        
-    except (ValueError, TypeError):
-        return {"error": f"Invalid patient ID format: {patient_id}"}
+    
+    # Simple patient filtering
+        patient_data = PATIENT_DATA[PATIENT_DATA['SerialNumber'] == patient_id_str].copy()
+    
+        if not patient_data.empty:
+        # Filter by date
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
+            patient_data = patient_data[patient_data['EventDateTime'] >= cutoff_date]
+    
+    except Exception as e:
+        return {"error": f"Error processing patient {patient_id}: {str(e)}"}
     
     if patient_data.empty:
         return {"error": f"No recent data found for patient {patient_id}"}
@@ -394,26 +387,20 @@ def analyze_glucose_patterns(patient_id: Union[int, str], analysis_days: int = 1
     
     try:
         patient_id_str = str(patient_id)
-        
-        # Get recent data
-        cutoff_date = datetime.now() - timedelta(days=analysis_days)
-        
-        # Handle timestamp parsing robustly
-        try:
-            event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='ISO8601')
-        except:
-            try:
-                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='mixed')
-            except:
-                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], utc=True)
-                
-        patient_data = PATIENT_DATA[
-            ((PATIENT_DATA['SerialNumber'].astype(str) == patient_id_str) |
-             (PATIENT_DATA['SerialNumber'] == patient_id)) & 
-            (event_times >= cutoff_date)
-        ].copy()
-    except (ValueError, TypeError):
-        return {"error": f"Invalid patient ID format: {patient_id}"}
+    
+    # Get recent data
+        cutoff_date = datetime.now() - timedelta(days=days_back)
+    
+    # Simple patient filtering
+        patient_data = PATIENT_DATA[PATIENT_DATA['SerialNumber'] == patient_id_str].copy()
+    
+        if not patient_data.empty:
+        # Filter by date
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
+            patient_data = patient_data[patient_data['EventDateTime'] >= cutoff_date]
+    
+    except Exception as e:
+        return {"error": f"Error processing patient {patient_id}: {str(e)}"}
     
     if patient_data.empty:
         return {"error": f"No recent data found for patient {patient_id}"}
