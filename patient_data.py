@@ -204,27 +204,35 @@ def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int 
     
     try:
         patient_id_str = str(patient_id)
-    
-    # Get recent data
-        cutoff_date = datetime.now() - timedelta(days=days_back)
-    
-    # Simple patient filtering
+        
+        # Get patient data first
         patient_data = PATIENT_DATA[PATIENT_DATA['SerialNumber'] == patient_id_str].copy()
-    
+        
         if not patient_data.empty:
-        # Filter by date
+            # Parse timestamps and filter by date
             patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
+            cutoff_date = pd.Timestamp.now(tz='UTC') - timedelta(days=days_back)
             patient_data = patient_data[patient_data['EventDateTime'] >= cutoff_date]
-    
+        
     except Exception as e:
         return {"error": f"Error processing patient {patient_id}: {str(e)}"}
     
     if patient_data.empty:
-        return {"error": f"No recent data found for patient {patient_id}"}
+        return {
+            "error": f"No recent data found for patient {patient_id}",
+            "patient_id": patient_id,
+            "total_anomalies": 0,
+            "anomalous_events": []
+        }
     
     glucose_values = patient_data['Readings (mg/dL)'].dropna()
     if len(glucose_values) < 5:
-        return {"error": "Insufficient data for anomaly detection"}
+        return {
+            "error": "Insufficient data for anomaly detection",
+            "patient_id": patient_id,
+            "total_anomalies": 0,
+            "anomalous_events": []
+        }
     
     mean_glucose = glucose_values.mean()
     std_glucose = glucose_values.std()
@@ -234,14 +242,6 @@ def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int 
     lower_threshold = mean_glucose - (threshold_factor * std_glucose)
     
     # Find anomalous readings
-    # Handle timestamp parsing
-    try:
-        patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='ISO8601')
-    except:
-        try:
-            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='mixed')
-        except:
-            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
     anomalous_high = patient_data[patient_data['Readings (mg/dL)'] > upper_threshold]
     anomalous_low = patient_data[patient_data['Readings (mg/dL)'] < lower_threshold]
     
@@ -387,25 +387,25 @@ def analyze_glucose_patterns(patient_id: Union[int, str], analysis_days: int = 1
     
     try:
         patient_id_str = str(patient_id)
-    
-    # Get recent data
-        cutoff_date = datetime.now() - timedelta(days=days_back)
-    
-    # Simple patient filtering
+        
+        # Get patient data first
         patient_data = PATIENT_DATA[PATIENT_DATA['SerialNumber'] == patient_id_str].copy()
-    
+        
         if not patient_data.empty:
-        # Filter by date
+            # Parse timestamps and filter by date
             patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
+            cutoff_date = pd.Timestamp.now(tz='UTC') - timedelta(days=analysis_days)
             patient_data = patient_data[patient_data['EventDateTime'] >= cutoff_date]
-    
+        
     except Exception as e:
         return {"error": f"Error processing patient {patient_id}: {str(e)}"}
     
     if patient_data.empty:
-        return {"error": f"No recent data found for patient {patient_id}"}
-    
-    patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'])
+        return {
+            "error": f"No recent data found for patient {patient_id}",
+            "patient_id": patient_id,
+            "total_readings": 0
+        }
     
     # Add time-based features
     patient_data['hour'] = patient_data['EventDateTime'].dt.hour
@@ -475,7 +475,13 @@ def calculate_time_in_range(glucose_series: pd.Series) -> dict:
     total_readings = len(glucose_series)
     
     if total_readings == 0:
-        return {}
+        return {
+            "very_low_under_54": "0.0%",
+            "low_54_to_70": "0.0%", 
+            "target_70_to_180": "0.0%",
+            "high_180_to_250": "0.0%",
+            "very_high_over_250": "0.0%"
+        }
     
     ranges = {
         "very_low": (glucose_series < 54).sum(),
