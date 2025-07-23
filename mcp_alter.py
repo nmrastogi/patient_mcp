@@ -1,320 +1,548 @@
-#!/usr/bin/env python3
-"""
-Test your MCP server manually with JSON data
-"""
-
-import subprocess
-import sys
+import pandas as pd
+import numpy as np
 import json
-import time
+from datetime import datetime, timedelta
+from typing import Union, Dict, Any, List
 
-def test_server_manually():
-    """Test the MCP server by sending JSON-RPC messages directly"""
-    print("=== Testing MCP Server Manually (JSON Version) ===")
-    
-    # Start the MCP server
-    process = subprocess.Popen(
-        [sys.executable, "server.py"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
+# Global variable to hold patient data
+PATIENT_DATA = pd.DataFrame()
+
+def load_json_data(json_file_path: str = "TidepoolExport_jan25_july25.json") -> pd.DataFrame:
+    """
+    Load and process JSON data - focusing only on glucose readings and timestamps
+    """
+    global PATIENT_DATA
     
     try:
-        # Step 1: Initialize the server
-        print("1. Sending initialization message...")
-        init_msg = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "test-client",
-                    "version": "1.0.0"
-                }
-            }
-        }
-        process.stdin.write(json.dumps(init_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(1)
-
-        # Step 2: Send initialized notification
-        print("2. Sending initialized notification...")
-        initialized_msg = {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized"
-        }
-        process.stdin.write(json.dumps(initialized_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(0.5)
-
-        # Step 3: List available tools
-        print("3. Requesting tools list...")
-        tools_msg = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-        }
-        process.stdin.write(json.dumps(tools_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(1)
-
-        # Step 4: Get available patients first
-        print("4. Getting available patients...")
-        patients_msg = {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "list_available_patients",
-                "arguments": {}
-            }
-        }
-        process.stdin.write(json.dumps(patients_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(2)
-
-        # Step 5: Test patient summary (you'll need to replace with actual patient ID)
-        print("5. Testing patient summary...")
-        summary_msg = {
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "tools/call",
-            "params": {
-                "name": "get_patient_summary",
-                "arguments": {
-                    "patient_id": "YOUR_PATIENT_ID_HERE"  # Replace with actual ID from step 4
-                }
-            }
-        }
-        process.stdin.write(json.dumps(summary_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(2)
-
-        # Step 6: Test anomaly detection
-        print("6. Testing anomaly detection...")
-        anomaly_msg = {
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "tools/call",
-            "params": {
-                "name": "get_anomalous_events",
-                "arguments": {
-                    "patient_id": "YOUR_PATIENT_ID_HERE",  # Replace with actual ID
-                    "days_back": 14
-                }
-            }
-        }
-        process.stdin.write(json.dumps(anomaly_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(2)
-
-        # Step 7: Test comprehensive report
-        print("7. Testing comprehensive report...")
-        report_msg = {
-            "jsonrpc": "2.0",
-            "id": 6,
-            "method": "tools/call",
-            "params": {
-                "name": "get_comprehensive_diabetes_report",
-                "arguments": {
-                    "patient_id": "YOUR_PATIENT_ID_HERE",  # Replace with actual ID
-                    "analysis_days": 14
-                }
-            }
-        }
-        process.stdin.write(json.dumps(report_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(3)
-
-        # Step 8: Read and display server responses
-        print("8. Reading server responses...")
-        print("=" * 50)
+        # Load JSON data
+        with open(json_file_path, 'r') as f:
+            json_data = json.load(f)
         
-        for i in range(10):  # Read up to 10 lines of output
-            try:
-                output_line = process.stdout.readline()
-                if output_line:
-                    print(f"Response {i+1}: {output_line.strip()}")
-                    
-                    # Try to parse as JSON for prettier display
-                    try:
-                        response_data = json.loads(output_line.strip())
-                        print(f"Parsed JSON: {json.dumps(response_data, indent=2)}")
-                    except:
-                        pass
-                        
-                time.sleep(0.5)
-            except:
-                break
-
-        if process.poll() is None:
-            print("✓ Server is running and accepted messages")
-        else:
-            print("❌ Server stopped unexpectedly")
-
-        # Check for errors
+        # Convert to DataFrame
+        df = pd.DataFrame(json_data)
+        
+        if df.empty:
+            print("Warning: JSON file is empty")
+            return df
+            
+        print(f"Loaded {len(df)} records from JSON")
+        print(f"Data types found: {df['type'].value_counts().to_dict()}")
+        
+        # Filter to only glucose readings (CBG = continuous glucose monitor, SMBG = fingerstick)
+        glucose_df = df[df['type'].isin(['cbg', 'smbg'])].copy()
+        print(f"Glucose readings found: {len(glucose_df)}")
+        
+        if glucose_df.empty:
+            print("No glucose data found!")
+            return pd.DataFrame()
+        
+        # Process timestamps with robust format handling
         try:
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                print(f"\nServer stderr output:")
-                print(stderr_output)
-            else:
-                print("✓ No errors in stderr")
+            glucose_df['time'] = pd.to_datetime(glucose_df['time'], format='ISO8601')
         except:
-            pass
-
-    except Exception as e:
-        print(f"Error during test: {e}")
-    
-    finally:
-        process.terminate()
-        process.wait()
-
-def test_data_loading_first():
-    """Test data loading before testing the server"""
-    print("=== Testing Data Loading First ===")
-    
-    try:
-        # Test the patient_data module directly
-        from patient_data import get_available_patients, fetch_patient_summary
-        
-        print("1. Testing data loading...")
-        patients = get_available_patients()
-        
-        if patients:
-            print(f"✓ Found {len(patients)} patients: {patients[:5]}...")  # Show first 5
-            
-            # Test with first patient
-            first_patient = patients[0]
-            print(f"2. Testing with patient ID: {first_patient}")
-            
-            summary = fetch_patient_summary(first_patient)
-            print(f"✓ Patient summary loaded: {summary.get('total_readings', 0)} readings")
-            
-            return first_patient
-        else:
-            print("❌ No patients found. Check your JSON file.")
-            return None
-            
-    except Exception as e:
-        print(f"❌ Error testing data: {e}")
-        return None
-
-def run_interactive_test():
-    """Run an interactive test where you can specify patient ID"""
-    print("=== Interactive MCP Server Test ===")
-    
-    # First check data loading
-    test_patient = test_data_loading_first()
-    
-    if not test_patient:
-        print("\nData loading failed. Please check:")
-        print("1. JSON file exists: TidepoolExport_jan25_july25.json")
-        print("2. JSON file has valid data")
-        print("3. File path is correct in patient_data.py")
-        return
-    
-    print(f"\nUsing patient ID: {test_patient}")
-    choice = input("Use this patient ID? (y/n): ").lower()
-    
-    if choice != 'y':
-        custom_id = input("Enter patient ID to test with: ")
-        test_patient = custom_id
-    
-    # Now test the server with the chosen patient ID
-    print(f"\nTesting server with patient ID: {test_patient}")
-    test_server_with_patient_id(test_patient)
-
-def test_server_with_patient_id(patient_id):
-    """Test server with a specific patient ID"""
-    print(f"=== Testing MCP Server with Patient {patient_id} ===")
-    
-    process = subprocess.Popen(
-        [sys.executable, "server.py"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    
-    try:
-        # Initialize
-        init_msg = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}}
-        process.stdin.write(json.dumps(init_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(1)
-        
-        # Initialized notification
-        process.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
-        process.stdin.flush()
-        time.sleep(0.5)
-        
-        # Test patient summary
-        print("Testing patient summary...")
-        summary_msg = {
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "get_patient_summary", "arguments": {"patient_id": patient_id}}
-        }
-        process.stdin.write(json.dumps(summary_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(2)
-        
-        # Test anomalies
-        print("Testing anomaly detection...")
-        anomaly_msg = {
-            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-            "params": {"name": "get_anomalous_events", "arguments": {"patient_id": patient_id, "days_back": 7}}
-        }
-        process.stdin.write(json.dumps(anomaly_msg) + "\n")
-        process.stdin.flush()
-        time.sleep(2)
-        
-        # Read responses
-        print("\nServer Responses:")
-        print("=" * 40)
-        for i in range(5):
             try:
-                response = process.stdout.readline()
-                if response:
-                    print(f"Response {i+1}: {response.strip()}")
+                glucose_df['time'] = pd.to_datetime(glucose_df['time'], format='mixed')
             except:
-                break
-            time.sleep(0.5)
-                
+                glucose_df['time'] = pd.to_datetime(glucose_df['time'], utc=True)
+        
+        # Create simplified patient data with just what we need
+        processed_data = []
+        for _, row in glucose_df.iterrows():
+            # Use uploadId as patient identifier (groups data by upload session)
+            patient_id = row.get('uploadId', 'patient_001')
+            
+            record = {
+                'SerialNumber': patient_id,
+                'EventDateTime': row['time'],
+                'Readings (mg/dL)': row.get('value'),
+                'data_source': 'cgm' if row['type'] == 'cbg' else 'fingerstick',
+                'type': row['type']
+            }
+            processed_data.append(record)
+        
+        # Create final DataFrame
+        PATIENT_DATA = pd.DataFrame(processed_data)
+        
+        # Remove any invalid glucose readings
+        PATIENT_DATA = PATIENT_DATA[PATIENT_DATA['Readings (mg/dL)'].notna()].copy()
+        PATIENT_DATA = PATIENT_DATA.sort_values(['SerialNumber', 'EventDateTime'])
+        
+        print(f"Processed {len(PATIENT_DATA)} valid glucose records")
+        print(f"Unique patients/uploads: {PATIENT_DATA['SerialNumber'].nunique()}")
+        
+        # Show sample of data
+        if not PATIENT_DATA.empty:
+            sample_patient = PATIENT_DATA['SerialNumber'].iloc[0]
+            sample_count = len(PATIENT_DATA[PATIENT_DATA['SerialNumber'] == sample_patient])
+            print(f"Sample patient '{sample_patient}' has {sample_count} readings")
+        
+        return PATIENT_DATA
+        
+    except FileNotFoundError:
+        print(f"Error: JSON file '{json_file_path}' not found")
+        return pd.DataFrame()
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON format - {e}")
+        return pd.DataFrame()
     except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        process.terminate()
-        process.wait()
+        print(f"Error loading JSON data: {e}")
+        return pd.DataFrame()
 
-if __name__ == "__main__":
-    print("MCP Server Test Suite (JSON Version)")
-    print("=" * 50)
+def get_available_patients() -> List[str]:
+    """Get list of available patient/device IDs"""
+    if PATIENT_DATA.empty:
+        load_json_data()
     
-    print("\nChoose test method:")
-    print("1. Interactive test (recommended)")
-    print("2. Manual server test")
-    print("3. Data loading test only")
+    if not PATIENT_DATA.empty and 'SerialNumber' in PATIENT_DATA.columns:
+        # Filter out NaN values and convert to string
+        valid_ids = PATIENT_DATA['SerialNumber'].dropna().astype(str).unique()
+        # Remove 'nan' strings if they exist
+        valid_ids = [id_val for id_val in valid_ids if id_val.lower() != 'nan']
+        return sorted(valid_ids)
+    return []
+
+def fetch_patient_summary(patient_id: Union[int, str], start_date: str = None, end_date: str = None) -> dict:
+    """
+    Returns filtered readings for a given SerialNumber and optional date range.
+    """
+    global PATIENT_DATA
     
-    choice = input("\nEnter choice (1-3): ").strip()
+    # Load data if not already loaded
+    if PATIENT_DATA.empty:
+        PATIENT_DATA = load_json_data()
     
-    if choice == "1":
-        run_interactive_test()
-    elif choice == "2":
-        test_server_manually()
-    elif choice == "3":
-        test_data_loading_first()
+    if PATIENT_DATA.empty:
+        return {"summary": "No data available. Please check JSON file."}
+    
+    try:
+        # Convert patient_id to string for comparison (since JSON might have string IDs)
+        patient_id_str = str(patient_id)
+        
+        # Try both string and numeric matching
+        patient_data = PATIENT_DATA[
+            (PATIENT_DATA['SerialNumber'].astype(str) == patient_id_str) |
+            (PATIENT_DATA['SerialNumber'] == patient_id)
+        ]
+        
+    except (ValueError, TypeError):
+        return {"summary": f"Invalid patient ID format: {patient_id}"}
+    
+    if patient_data.empty:
+        available_patients = get_available_patients()
+        return {
+            "summary": f"No data found for patient ID {patient_id}",
+            "available_patients": available_patients[:10]  # Show first 10 available IDs
+        }
+
+    # Convert EventDateTime to datetime if not already
+    patient_data = patient_data.copy()
+    if 'EventDateTime' in patient_data.columns:
+        try:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='ISO8601')
+        except:
+            try:
+                patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='mixed')
+            except:
+                patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
+    
+    # Apply date filtering if provided
+    if start_date and end_date:
+        try:
+            start_dt = pd.to_datetime(start_date)
+            end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # Include end date
+            patient_data = patient_data[
+                (patient_data['EventDateTime'] >= start_dt) & 
+                (patient_data['EventDateTime'] < end_dt)
+            ]
+        except Exception as e:
+            return {"summary": f"Invalid date format. Use YYYY-MM-DD. Error: {e}"}
+        
+    # Convert dataframe to list of dicts
+    readings = []
+    for _, row in patient_data.iterrows():
+        reading = {
+            'EventDateTime': row['EventDateTime'].isoformat() if pd.notna(row['EventDateTime']) else None,
+            'Readings (mg/dL)': row['Readings (mg/dL)'] if pd.notna(row['Readings (mg/dL)']) else None,
+            'data_source': row.get('data_source', 'unknown'),
+            'type': row.get('type', 'unknown')
+        }
+        readings.append(reading)
+
+    date_info = f" from {start_date} to {end_date}" if start_date and end_date else ""
+    
+    return {
+        "patient_id": patient_id,
+        "date_range": date_info,
+        "readings": readings,
+        "total_readings": len(readings),
+        "data_sources": patient_data['data_source'].value_counts().to_dict() if 'data_source' in patient_data.columns else {}
+    }
+
+def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int = 30, threshold_factor: float = 2.5) -> dict:
+    """
+    Detect anomalous glucose readings based on statistical analysis.
+    """
+    global PATIENT_DATA
+    
+    if PATIENT_DATA.empty:
+        PATIENT_DATA = load_json_data()
+    
+    try:
+        patient_id_str = str(patient_id)
+        
+        # Get recent data
+        cutoff_date = datetime.now() - timedelta(days=days_back)
+        
+        # Handle timestamp parsing robustly
+        try:
+            event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='ISO8601')
+        except:
+            try:
+                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='mixed')
+            except:
+                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], utc=True)
+        
+        patient_data = PATIENT_DATA[
+            ((PATIENT_DATA['SerialNumber'].astype(str) == patient_id_str) |
+             (PATIENT_DATA['SerialNumber'] == patient_id)) & 
+            (event_times >= cutoff_date)
+        ].copy()
+        
+    except (ValueError, TypeError):
+        return {"error": f"Invalid patient ID format: {patient_id}"}
+    
+    if patient_data.empty:
+        return {"error": f"No recent data found for patient {patient_id}"}
+    
+    glucose_values = patient_data['Readings (mg/dL)'].dropna()
+    if len(glucose_values) < 5:
+        return {"error": "Insufficient data for anomaly detection"}
+    
+    mean_glucose = glucose_values.mean()
+    std_glucose = glucose_values.std()
+    
+    # Define anomalies as readings beyond threshold_factor standard deviations
+    upper_threshold = mean_glucose + (threshold_factor * std_glucose)
+    lower_threshold = mean_glucose - (threshold_factor * std_glucose)
+    
+    # Find anomalous readings
+    # Handle timestamp parsing
+    try:
+        patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='ISO8601')
+    except:
+        try:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='mixed')
+        except:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
+    anomalous_high = patient_data[patient_data['Readings (mg/dL)'] > upper_threshold]
+    anomalous_low = patient_data[patient_data['Readings (mg/dL)'] < lower_threshold]
+    
+    anomalies = []
+    
+    # Process high anomalies
+    for _, record in anomalous_high.iterrows():
+        if pd.notna(record['Readings (mg/dL)']):
+            anomalies.append({
+                "timestamp": record['EventDateTime'].isoformat(),
+                "glucose_value": float(record['Readings (mg/dL)']),
+                "anomaly_type": "high",
+                "deviation_factor": float((record['Readings (mg/dL)'] - mean_glucose) / std_glucose),
+                "severity": "severe" if record['Readings (mg/dL)'] > mean_glucose + (3 * std_glucose) else "moderate",
+                "data_source": record.get('data_source', 'unknown')
+            })
+    
+    # Process low anomalies
+    for _, record in anomalous_low.iterrows():
+        if pd.notna(record['Readings (mg/dL)']):
+            anomalies.append({
+                "timestamp": record['EventDateTime'].isoformat(),
+                "glucose_value": float(record['Readings (mg/dL)']),
+                "anomaly_type": "low", 
+                "deviation_factor": float((record['Readings (mg/dL)'] - mean_glucose) / std_glucose),
+                "severity": "severe" if record['Readings (mg/dL)'] < mean_glucose - (3 * std_glucose) else "moderate",
+                "data_source": record.get('data_source', 'unknown')
+            })
+    
+    # Sort by timestamp
+    anomalies.sort(key=lambda x: x['timestamp'])
+    
+    return {
+        "patient_id": patient_id,
+        "analysis_period": f"Last {days_back} days",
+        "total_anomalies": len(anomalies),
+        "baseline_stats": {
+            "mean_glucose": round(mean_glucose, 1),
+            "std_deviation": round(std_glucose, 1),
+            "upper_threshold": round(upper_threshold, 1),
+            "lower_threshold": round(lower_threshold, 1)
+        },
+        "anomalous_events": anomalies
+    }
+
+def find_last_hypoglycemic_event(patient_id: Union[int, str], glucose_threshold: float = 70) -> dict:
+    """
+    Find the most recent hypoglycemic event and analyze recovery.
+    """
+    global PATIENT_DATA
+    
+    if PATIENT_DATA.empty:
+        PATIENT_DATA = load_json_data()
+    
+    try:
+        patient_id_str = str(patient_id)
+        patient_data = PATIENT_DATA[
+            (PATIENT_DATA['SerialNumber'].astype(str) == patient_id_str) |
+            (PATIENT_DATA['SerialNumber'] == patient_id)
+        ].copy()
+    except (ValueError, TypeError):
+        return {"error": f"Invalid patient ID format: {patient_id}"}
+    
+    if patient_data.empty:
+        return {"error": f"No data found for patient {patient_id}"}
+    
+    # Handle timestamp parsing
+    try:
+        patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='ISO8601')
+    except:
+        try:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='mixed')
+        except:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
+    
+    # Find hypoglycemic events
+    hypo_events = patient_data[patient_data['Readings (mg/dL)'] < glucose_threshold]
+    
+    if hypo_events.empty:
+        return {
+            "patient_id": patient_id,
+            "message": f"No hypoglycemic events found below {glucose_threshold} mg/dL",
+            "last_hypo_event": None
+        }
+    
+    # Get the most recent hypoglycemic reading
+    last_hypo = hypo_events.iloc[-1]
+    event_time = last_hypo['EventDateTime']
+    
+    # Find recovery (next reading >= threshold after the hypo event)
+    recovery_data = patient_data[
+        (patient_data['EventDateTime'] > event_time) & 
+        (patient_data['Readings (mg/dL)'] >= glucose_threshold)
+    ]
+    
+    recovery_info = None
+    if not recovery_data.empty:
+        recovery_reading = recovery_data.iloc[0]
+        duration_minutes = (recovery_reading['EventDateTime'] - event_time).total_seconds() / 60
+        recovery_info = {
+            "recovery_time": recovery_reading['EventDateTime'].isoformat(),
+            "recovery_glucose": float(recovery_reading['Readings (mg/dL)']),
+            "duration_minutes": round(duration_minutes, 1)
+        }
+    
+    # Look for pattern before hypo (last 3 readings)
+    readings_before = patient_data[patient_data['EventDateTime'] < event_time].tail(3)
+    trend_before = "unknown"
+    if len(readings_before) >= 2:
+        glucose_trend = readings_before['Readings (mg/dL)'].diff().iloc[-1]
+        if glucose_trend < -10:
+            trend_before = "falling rapidly"
+        elif glucose_trend < -5:
+            trend_before = "falling"
+        elif glucose_trend > 5:
+            trend_before = "rising"
+        else:
+            trend_before = "stable"
+    
+    days_ago = (datetime.now() - event_time.replace(tzinfo=None)).days
+    
+    return {
+        "patient_id": patient_id,
+        "last_hypo_event": {
+            "timestamp": event_time.isoformat(),
+            "glucose_value": float(last_hypo['Readings (mg/dL)']),
+            "days_ago": days_ago,
+            "hours_ago": round((datetime.now() - event_time.replace(tzinfo=None)).total_seconds() / 3600, 1),
+            "trend_before_event": trend_before,
+            "recovery": recovery_info,
+            "data_source": last_hypo.get('data_source', 'unknown')
+        }
+    }
+
+def analyze_glucose_patterns(patient_id: Union[int, str], analysis_days: int = 14) -> dict:
+    """
+    Analyze daily glucose patterns to identify when sugar typically rises and falls.
+    """
+    global PATIENT_DATA
+    
+    if PATIENT_DATA.empty:
+        PATIENT_DATA = load_json_data()
+    
+    try:
+        patient_id_str = str(patient_id)
+        
+        # Get recent data
+        cutoff_date = datetime.now() - timedelta(days=analysis_days)
+        
+        # Handle timestamp parsing robustly
+        try:
+            event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='ISO8601')
+        except:
+            try:
+                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='mixed')
+            except:
+                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], utc=True)
+                
+        patient_data = PATIENT_DATA[
+            ((PATIENT_DATA['SerialNumber'].astype(str) == patient_id_str) |
+             (PATIENT_DATA['SerialNumber'] == patient_id)) & 
+            (event_times >= cutoff_date)
+        ].copy()
+    except (ValueError, TypeError):
+        return {"error": f"Invalid patient ID format: {patient_id}"}
+    
+    if patient_data.empty:
+        return {"error": f"No recent data found for patient {patient_id}"}
+    
+    patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'])
+    
+    # Add time-based features
+    patient_data['hour'] = patient_data['EventDateTime'].dt.hour
+    patient_data['day_of_week'] = patient_data['EventDateTime'].dt.day_name()
+    patient_data['date'] = patient_data['EventDateTime'].dt.date
+    
+    # Analyze hourly patterns
+    hourly_stats = patient_data.groupby('hour')['Readings (mg/dL)'].agg([
+        'mean', 'std', 'count', 'min', 'max'
+    ]).round(1)
+    
+    hourly_patterns = {}
+    for hour in hourly_stats.index:
+        stats = hourly_stats.loc[hour]
+        hourly_patterns[f"{hour:02d}:00"] = {
+            "avg_glucose": float(stats['mean']),
+            "std_deviation": float(stats['std']) if not pd.isna(stats['std']) else 0,
+            "min_glucose": float(stats['min']),
+            "max_glucose": float(stats['max']),
+            "readings_count": int(stats['count'])
+        }
+    
+    # Identify peak and trough times
+    peak_hour = hourly_stats['mean'].idxmax()
+    trough_hour = hourly_stats['mean'].idxmin()
+    
+    # Detect dawn phenomenon (glucose rise between 4-8 AM)
+    dawn_hours = [4, 5, 6, 7, 8]
+    dawn_data = hourly_stats.loc[hourly_stats.index.isin(dawn_hours)]
+    dawn_phenomenon = False
+    dawn_rise = 0
+    
+    if len(dawn_data) >= 3:
+        early_morning = dawn_data.loc[4:6]['mean'].mean() if any(h in dawn_data.index for h in [4,5,6]) else None
+        late_morning = dawn_data.loc[6:8]['mean'].mean() if any(h in dawn_data.index for h in [6,7,8]) else None
+        
+        if early_morning and late_morning:
+            dawn_rise = late_morning - early_morning
+            dawn_phenomenon = dawn_rise > 15  # Significant rise
+    
+    # Analyze day-to-day variability
+    daily_avg = patient_data.groupby('date')['Readings (mg/dL)'].mean()
+    glucose_variability = {
+        "coefficient_of_variation": round((daily_avg.std() / daily_avg.mean()) * 100, 1),
+        "daily_range_avg": round(daily_avg.max() - daily_avg.min(), 1)
+    }
+    
+    return {
+        "patient_id": patient_id,
+        "analysis_period": f"Last {analysis_days} days",
+        "total_readings": len(patient_data),
+        "hourly_patterns": hourly_patterns,
+        "peak_glucose_time": f"{peak_hour:02d}:00",
+        "lowest_glucose_time": f"{trough_hour:02d}:00",
+        "dawn_phenomenon": {
+            "detected": dawn_phenomenon,
+            "rise_amount": round(dawn_rise, 1) if dawn_rise else 0,
+            "description": "Glucose rise between 4-8 AM typical of dawn phenomenon" if dawn_phenomenon else "No significant dawn phenomenon detected"
+        },
+        "glucose_variability": glucose_variability,
+        "time_in_ranges": calculate_time_in_range(patient_data['Readings (mg/dL)'])
+    }
+
+def calculate_time_in_range(glucose_series: pd.Series) -> dict:
+    """Calculate percentage of time in different glucose ranges."""
+    glucose_series = glucose_series.dropna()
+    total_readings = len(glucose_series)
+    
+    if total_readings == 0:
+        return {}
+    
+    ranges = {
+        "very_low": (glucose_series < 54).sum(),
+        "low": ((glucose_series >= 54) & (glucose_series < 70)).sum(),
+        "target_range": ((glucose_series >= 70) & (glucose_series <= 180)).sum(),
+        "high": ((glucose_series > 180) & (glucose_series <= 250)).sum(),
+        "very_high": (glucose_series > 250).sum()
+    }
+    
+    percentages = {k: round((v / total_readings) * 100, 1) for k, v in ranges.items()}
+    
+    return {
+        "very_low_under_54": f"{percentages['very_low']}%",
+        "low_54_to_70": f"{percentages['low']}%", 
+        "target_70_to_180": f"{percentages['target_range']}%",
+        "high_180_to_250": f"{percentages['high']}%",
+        "very_high_over_250": f"{percentages['very_high']}%"
+    }
+
+# Initialize data on import
+print("Loading JSON data...")
+try:
+    PATIENT_DATA = load_json_data()
+    if not PATIENT_DATA.empty:
+        print(f"✓ Loaded data for {len(get_available_patients())} patients/devices")
     else:
-        print("Invalid choice. Running interactive test...")
-        run_interactive_test()
+        print("⚠ No data loaded - check JSON file")
+except Exception as e:
+    print(f"⚠ Error during initialization: {e}")
+
+# Testing section
+if __name__ == "__main__":
+    print("=== Testing JSON Patient Data Module ===")
     
-    print("\n" + "=" * 50)
-    print("Test complete!")
-    print("\nNext steps:")
-    print("1. If tests passed, your server is ready for Claude MCP")
-    print("2. If tests failed, check the error messages above")
-    print("3. Make sure your JSON file path is correct")
+    # Test data loading
+    print(f"Data loaded: {not PATIENT_DATA.empty}")
+    print(f"Total glucose records: {len(PATIENT_DATA)}")
+    
+    if not PATIENT_DATA.empty:
+        available_patients = get_available_patients()
+        print(f"Available patients: {available_patients}")
+        
+        if available_patients:
+            # Test with first available patient
+            first_patient = available_patients[0]
+            print(f"\nTesting with patient ID: {first_patient}")
+            
+            # Test all functions
+            print("\n1. Testing basic summary:")
+            result = fetch_patient_summary(first_patient)
+            print(f"Readings found: {result.get('total_readings', 0)}")
+            
+            print("\n2. Testing anomaly detection:")
+            anomalies = detect_anomalous_glucose_events(first_patient)
+            print(f"Anomalies found: {anomalies.get('total_anomalies', 0)}")
+            
+            print("\n3. Testing hypo detection:")
+            hypo = find_last_hypoglycemic_event(first_patient)
+            if hypo.get('last_hypo_event'):
+                print(f"Last hypo: {hypo['last_hypo_event']['days_ago']} days ago")
+            else:
+                print("No hypo events found")
+            
+            print("\n4. Testing pattern analysis:")
+            patterns = analyze_glucose_patterns(first_patient)
+            if 'peak_glucose_time' in patterns:
+                print(f"Peak glucose time: {patterns['peak_glucose_time']}")
+                print(f"Dawn phenomenon: {patterns['dawn_phenomenon']['detected']}")
+        else:
+            print("No patients found in data")
+    else:
+        print("❌ No data loaded from JSON")
