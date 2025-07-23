@@ -1,5 +1,11 @@
 from mcp.server.fastmcp import FastMCP
-from patient_data import fetch_patient_summary
+from patient_data import (
+    fetch_patient_summary, 
+    detect_anomalous_glucose_events,
+    find_last_hypoglycemic_event,
+    analyze_glucose_patterns,
+    get_available_patients
+)
 
 import logging
 import sys
@@ -11,12 +17,12 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP(name="DiabetesMonitoringServer")
 
 @mcp.tool()
-def get_patient_summary(patient_id: int, start_date: str = None, end_date: str = None) -> dict:
+def get_patient_summary(patient_id: str, start_date: str = None, end_date: str = None) -> dict:
     """
     Retrieve patient summary with optional date filtering.
     
     Args:
-        patient_id (int): Patient identifier 
+        patient_id (str): Patient identifier (can be string or numeric)
         start_date (str): Optional start date (YYYY-MM-DD format)
         end_date (str): Optional end date (YYYY-MM-DD format)
     """
@@ -27,13 +33,14 @@ def get_patient_summary(patient_id: int, start_date: str = None, end_date: str =
     except Exception as e:
         logger.error(f"Error processing patient {patient_id}: {e}")
         return {"error": str(e), "patient_id": patient_id}
+
 @mcp.tool()
-def get_anomalous_events(patient_id: int, days_back: int = 30, threshold_factor: float = 2.5) -> dict:
+def get_anomalous_events(patient_id: str, days_back: int = 30, threshold_factor: float = 2.5) -> dict:
     """
     Detect anomalous glucose events based on statistical analysis.
     
     Args:
-        patient_id (int): Patient identifier
+        patient_id (str): Patient identifier
         days_back (int): Number of days to analyze (default: 30)
         threshold_factor (float): Standard deviation multiplier for anomaly detection (default: 2.5)
     """
@@ -46,12 +53,12 @@ def get_anomalous_events(patient_id: int, days_back: int = 30, threshold_factor:
         return {"error": str(e), "patient_id": patient_id}
 
 @mcp.tool()
-def get_last_hypo_event(patient_id: int, glucose_threshold: float = 70) -> dict:
+def get_last_hypo_event(patient_id: str, glucose_threshold: float = 70) -> dict:
     """
     Find the most recent hypoglycemic event and recovery information.
     
     Args:
-        patient_id (int): Patient identifier
+        patient_id (str): Patient identifier
         glucose_threshold (float): Glucose level considered hypoglycemic (default: 70 mg/dL)
     """
     try:
@@ -63,12 +70,12 @@ def get_last_hypo_event(patient_id: int, glucose_threshold: float = 70) -> dict:
         return {"error": str(e), "patient_id": patient_id}
 
 @mcp.tool()
-def get_glucose_patterns(patient_id: int, analysis_days: int = 14) -> dict:
+def get_glucose_patterns(patient_id: str, analysis_days: int = 14) -> dict:
     """
     Analyze daily glucose patterns to identify when sugar typically rises and falls.
     
     Args:
-        patient_id (int): Patient identifier
+        patient_id (str): Patient identifier
         analysis_days (int): Number of days to analyze (default: 14)
     """
     try:
@@ -80,12 +87,29 @@ def get_glucose_patterns(patient_id: int, analysis_days: int = 14) -> dict:
         return {"error": str(e), "patient_id": patient_id}
 
 @mcp.tool()
-def get_comprehensive_diabetes_report(patient_id: int, analysis_days: int = 30) -> dict:
+def list_available_patients() -> dict:
+    """
+    Get a list of all available patient/device IDs in the dataset.
+    """
+    try:
+        logger.info("Getting list of available patients")
+        patients = get_available_patients()
+        return {
+            "available_patients": patients,
+            "total_count": len(patients),
+            "message": f"Found {len(patients)} patients/devices in the dataset"
+        }
+    except Exception as e:
+        logger.error(f"Error getting patient list: {e}")
+        return {"error": str(e)}
+
+@mcp.tool()
+def get_comprehensive_diabetes_report(patient_id: str, analysis_days: int = 30) -> dict:
     """
     Generate a comprehensive diabetes management report including all key metrics.
     
     Args:
-        patient_id (int): Patient identifier
+        patient_id (str): Patient identifier
         analysis_days (int): Number of days to analyze (default: 30)
     """
     try:
@@ -100,11 +124,12 @@ def get_comprehensive_diabetes_report(patient_id: int, analysis_days: int = 30) 
         # Compile comprehensive report
         report = {
             "patient_id": patient_id,
-            "report_generated": "2025-07-20",  # You could use datetime.now().isoformat()
+            "report_generated": "2025-07-22",
             "analysis_period": f"Last {analysis_days} days",
             "summary": {
                 "total_readings": summary.get("total_readings", 0),
-                "data_quality": "Good" if summary.get("total_readings", 0) > 100 else "Limited"
+                "data_quality": "Good" if summary.get("total_readings", 0) > 100 else "Limited",
+                "data_sources": summary.get("data_sources", {})
             },
             "glucose_control": {
                 "time_in_ranges": patterns.get("time_in_ranges", {}),
@@ -183,5 +208,6 @@ def generate_recommendations(patterns: dict, anomalies: dict, hypo_data: dict) -
         })
     
     return recommendations
+
 if __name__ == "__main__":
     mcp.run(transport='stdio')

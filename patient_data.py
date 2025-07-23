@@ -28,9 +28,18 @@ def load_json_data(json_file_path: str = "TidepoolExport_jan25_july25.json") -> 
         print(f"Loaded {len(df)} records from JSON")
         print(f"Data types found: {df['type'].value_counts().to_dict()}")
         
-        # Process timestamps
+        # Process timestamps with robust format handling
         if 'time' in df.columns:
-            df['time'] = pd.to_datetime(df['time'])
+            try:
+                # Try ISO8601 format first (handles Z suffix properly)
+                df['time'] = pd.to_datetime(df['time'], format='ISO8601')
+            except:
+                try:
+                    # Fallback to mixed format parsing
+                    df['time'] = pd.to_datetime(df['time'], format='mixed')
+                except:
+                    # Last resort - let pandas infer
+                    df['time'] = pd.to_datetime(df['time'], utc=True)
         
         # Create standardized columns for glucose data
         df['glucose_value'] = None
@@ -143,7 +152,13 @@ def fetch_patient_summary(patient_id: Union[int, str], start_date: str = None, e
     # Convert EventDateTime to datetime if not already
     patient_data = patient_data.copy()
     if 'EventDateTime' in patient_data.columns:
-        patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'])
+        try:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='ISO8601')
+        except:
+            try:
+                patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='mixed')
+            except:
+                patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
     
     # Apply date filtering if provided
     if start_date and end_date:
@@ -192,10 +207,20 @@ def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int 
         
         # Get recent data
         cutoff_date = datetime.now() - timedelta(days=days_back)
+        
+        # Handle timestamp parsing robustly
+        try:
+            event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='ISO8601')
+        except:
+            try:
+                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='mixed')
+            except:
+                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], utc=True)
+        
         patient_data = PATIENT_DATA[
             ((PATIENT_DATA['SerialNumber'].astype(str) == patient_id_str) |
              (PATIENT_DATA['SerialNumber'] == patient_id)) & 
-            (pd.to_datetime(PATIENT_DATA['EventDateTime']) >= cutoff_date)
+            (event_times >= cutoff_date)
         ].copy()
         
     except (ValueError, TypeError):
@@ -216,7 +241,14 @@ def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int 
     lower_threshold = mean_glucose - (threshold_factor * std_glucose)
     
     # Find anomalous readings
-    patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'])
+    # Handle timestamp parsing
+    try:
+        patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='ISO8601')
+    except:
+        try:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='mixed')
+        except:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
     anomalous_high = patient_data[patient_data['Readings (mg/dL)'] > upper_threshold]
     anomalous_low = patient_data[patient_data['Readings (mg/dL)'] < lower_threshold]
     
@@ -283,7 +315,14 @@ def find_last_hypoglycemic_event(patient_id: Union[int, str], glucose_threshold:
     if patient_data.empty:
         return {"error": f"No data found for patient {patient_id}"}
     
-    patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'])
+    # Handle timestamp parsing
+    try:
+        patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='ISO8601')
+    except:
+        try:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], format='mixed')
+        except:
+            patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
     
     # Find hypoglycemic events
     hypo_events = patient_data[patient_data['Readings (mg/dL)'] < glucose_threshold]
@@ -358,10 +397,20 @@ def analyze_glucose_patterns(patient_id: Union[int, str], analysis_days: int = 1
         
         # Get recent data
         cutoff_date = datetime.now() - timedelta(days=analysis_days)
+        
+        # Handle timestamp parsing robustly
+        try:
+            event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='ISO8601')
+        except:
+            try:
+                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], format='mixed')
+            except:
+                event_times = pd.to_datetime(PATIENT_DATA['EventDateTime'], utc=True)
+                
         patient_data = PATIENT_DATA[
             ((PATIENT_DATA['SerialNumber'].astype(str) == patient_id_str) |
              (PATIENT_DATA['SerialNumber'] == patient_id)) & 
-            (pd.to_datetime(PATIENT_DATA['EventDateTime']) >= cutoff_date)
+            (event_times >= cutoff_date)
         ].copy()
     except (ValueError, TypeError):
         return {"error": f"Invalid patient ID format: {patient_id}"}
