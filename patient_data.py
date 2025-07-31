@@ -163,8 +163,8 @@ def fetch_patient_summary(patient_id: Union[int, str], start_date: str = None, e
     # Apply date filtering if provided
     if start_date and end_date:
         try:
-            start_dt = pd.to_datetime(start_date)
-            end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # Include end date
+            start_dt = pd.to_datetime(start_date).tz_localize('UTC')
+            end_dt = pd.to_datetime(end_date).tz_localize('UTC') + pd.Timedelta(days=1)  # Include end date  # Include end date
             patient_data = patient_data[
                 (patient_data['EventDateTime'] >= start_dt) & 
                 (patient_data['EventDateTime'] < end_dt)
@@ -212,7 +212,7 @@ def detect_anomalous_glucose_events(patient_id: Union[int, str], days_back: int 
             # Parse timestamps and filter by date
             patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
             latest_date = patient_data['EventDateTime'].max()
-            cutoff_date = latest_date - timedelta(days=days_back)
+            cutoff_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=days_back)
             patient_data = patient_data[patient_data['EventDateTime'] >= cutoff_date]
         
     except Exception as e:
@@ -362,7 +362,9 @@ def find_last_hypoglycemic_event(patient_id: Union[int, str], glucose_threshold:
         else:
             trend_before = "stable"
     
-    days_ago = (datetime.now() - event_time.replace(tzinfo=None)).days
+    now = pd.Timestamp.now(tz='UTC')
+    days_ago = (now - event_time).days
+    hours_ago = (now - event_time).total_seconds() / 3600
     
     return {
         "patient_id": patient_id,
@@ -370,7 +372,7 @@ def find_last_hypoglycemic_event(patient_id: Union[int, str], glucose_threshold:
             "timestamp": event_time.isoformat(),
             "glucose_value": float(last_hypo['Readings (mg/dL)']),
             "days_ago": days_ago,
-            "hours_ago": round((datetime.now() - event_time.replace(tzinfo=None)).total_seconds() / 3600, 1),
+            "hours_ago": round(hours_ago, 1),
             "trend_before_event": trend_before,
             "recovery": recovery_info,
             "data_source": last_hypo.get('data_source', 'unknown')
@@ -396,7 +398,7 @@ def analyze_glucose_patterns(patient_id: Union[int, str], analysis_days: int = 1
             # Parse timestamps and filter by date
             patient_data['EventDateTime'] = pd.to_datetime(patient_data['EventDateTime'], utc=True)
             latest_date = patient_data['EventDateTime'].max()
-            cutoff_date = latest_date - timedelta(days=analysis_days)
+            cutoff_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=analysis_days)
             patient_data = patient_data[patient_data['EventDateTime'] >= cutoff_date]
         
     except Exception as e:
