@@ -21,16 +21,10 @@ class AppleHealthConnector:
         self.health_data = None
         self.processed_data = None
         
-        # Apple Health data types relevant to diabetes
+        # Apple Health data types - focused on key diabetes monitoring metrics
         self.diabetes_data_types = {
             'HKQuantityTypeIdentifierBloodGlucose': 'blood_glucose',
-            'HKQuantityTypeIdentifierInsulinDelivery': 'insulin_delivery',
-            'HKQuantityTypeIdentifierDietaryCarbohydrates': 'carbohydrates',
-            'HKQuantityTypeIdentifierDietaryProtein': 'protein',
-            'HKQuantityTypeIdentifierDietaryFatTotal': 'fat',
-            'HKQuantityTypeIdentifierDietaryEnergyConsumed': 'calories',
             'HKQuantityTypeIdentifierHeartRate': 'heart_rate',
-            'HKQuantityTypeIdentifierStepCount': 'steps',
             'HKCategoryTypeIdentifierSleepAnalysis': 'sleep',
             'HKWorkoutTypeIdentifier': 'workout'
         }
@@ -155,17 +149,18 @@ class AppleHealthConnector:
                         'measurement_type': 'fingerstick'  # Assume fingerstick unless specified
                     })
                 
-                elif record_type == 'HKQuantityTypeIdentifierInsulinDelivery':
+                elif record_type == 'HKQuantityTypeIdentifierHeartRate':
                     base_record.update({
-                        'insulin_units': value,
-                        'insulin_type': 'unknown'  # Apple Health doesn't distinguish bolus/basal
+                        'heart_rate_bpm': value,
+                        'heart_rate_unit': unit
                     })
                 
-                elif record_type.startswith('HKQuantityTypeIdentifierDietary'):
-                    # Nutritional data
+                elif record_type == 'HKCategoryTypeIdentifierSleepAnalysis':
+                    # Sleep data is handled differently - it's a category, not quantity
+                    sleep_value = record.get('value', '')
                     base_record.update({
-                        'nutrition_value': value,
-                        'nutrition_unit': unit
+                        'sleep_stage': sleep_value,
+                        'sleep_duration_hours': (end_time - start_time).total_seconds() / 3600
                     })
                 
                 # Extract metadata if present
@@ -190,7 +185,42 @@ class AppleHealthConnector:
                 logger.warning(f"Error processing Apple Health record: {e}")
                 continue
         
-        # Process Workout data
+        # Process Sleep data (handled separately as it's a category type)
+        for sleep_record in root.findall('.//Record[@type="HKCategoryTypeIdentifierSleepAnalysis"]'):
+            try:
+                start_time_str = sleep_record.get('startDate')
+                end_time_str = sleep_record.get('endDate')
+                
+                if not start_time_str or not end_time_str:
+                    continue
+                
+                start_time = self._parse_apple_timestamp(start_time_str)
+                end_time = self._parse_apple_timestamp(end_time_str)
+                
+                if start_time < start_date or start_time > end_date:
+                    continue
+                
+                sleep_value = sleep_record.get('value', 'HKCategoryValueSleepAnalysisInBed')
+                
+                sleep_record_data = {
+                    'timestamp': start_time,
+                    'end_timestamp': end_time,
+                    'data_type': 'sleep',
+                    'apple_health_type': 'HKCategoryTypeIdentifierSleepAnalysis',
+                    'sleep_stage': sleep_value,
+                    'sleep_duration_hours': (end_time - start_time).total_seconds() / 3600,
+                    'source_name': sleep_record.get('sourceName', ''),
+                    'source_version': sleep_record.get('sourceVersion', ''),
+                    'device': sleep_record.get('device', ''),
+                    'creation_date': self._parse_apple_timestamp(sleep_record.get('creationDate', start_time_str)),
+                    'source': 'apple_health'
+                }
+                
+                records.append(sleep_record_data)
+                
+            except Exception as e:
+                logger.warning(f"Error processing sleep record: {e}")
+                continue
         for workout in root.findall('.//Workout'):
             try:
                 start_time_str = workout.get('startDate')
@@ -233,7 +263,7 @@ class AppleHealthConnector:
         df['day_of_week'] = df['timestamp'].dt.day_name()
         df['date'] = df['timestamp'].dt.date
         
-        logger.info(f"Extracted {len(df)} Apple Health diabetes records")
+        logger.info(f"Extracted {len(df)} Apple Health records (glucose, heart rate, sleep, exercise)")
         return df
     
     def _parse_apple_timestamp(self, timestamp_str: str) -> datetime:
@@ -292,34 +322,144 @@ class AppleHealthConnector:
         
         return cgm_data
     
-    def get_nutrition_summary(self, days_back: int = 7) -> Dict:
-        """Get nutrition summary from Apple Health food logging"""
+    def get_heart_rate_summary(self, days_back: int = 7) -> Dict:
+        """Get heart rate summary and patterns from Apple Health"""
         all_data = self.extract_diabetes_data(days_back)
         
         if all_data.empty:
             return {}
         
-        nutrition_data = all_data[all_data['data_type'].str.contains('carbohydrates|protein|fat|calories', na=False)]
+        heart_rate_data = all_data[all_data['data_type'] == 'heart_rate']
         
-        if nutrition_data.empty:
-            return {"message": "No nutrition data found in Apple Health"}
+        if heart_rate_data.empty:
+            return {"message": "No heart rate data found in Apple Health"}
         
-        # Group by date and data type
-        daily_nutrition = nutrition_data.groupby(['date', 'data_type'])['nutrition_value'].sum().unstack(fill_value=0)
+        # Calculate heart rate statistics
+        hr_values = heart_rate_data['heart_rate_bpm'].dropna()
+        
+        if len(hr_values) == 0:
+            return {"message": "No valid heart rate readings found"}
+        
+        # Analyze patterns
+        daily_hr = heart_rate_data.groupby('date')['heart_rate_bpm'].agg([
+            'mean', 'min', 'max', 'count'
+        ]).round(1)
+        
+        hourly_hr = heart_rate_data.groupby('hour')['heart_rate_bpm'].mean().round(1)
         
         summary = {
             "analysis_period": f"Last {days_back} days",
-            "daily_averages": {},
-            "total_logged_days": len(daily_nutrition)
+            "total_readings": len(heart_rate_data),
+            "average_heart_rate": round(hr_values.mean(), 1),
+            "resting_heart_rate_estimate": round(hr_values.quantile(0.1), 1),  # Bottom 10% as proxy for resting
+            "max_heart_rate": round(hr_values.max(), 1),
+            "heart_rate_variability": round(hr_values.std(), 1),
+            "daily_averages": {
+                "mean_daily_hr": round(daily_hr['mean'].mean(), 1) if not daily_hr.empty else None,
+                "readings_per_day": round(daily_hr['count'].mean(), 1) if not daily_hr.empty else None
+            },
+            "hourly_patterns": {
+                f"{hour:02d}:00": float(hr_avg) 
+                for hour, hr_avg in hourly_hr.items() 
+                if not pd.isna(hr_avg)
+            }
         }
         
-        for nutrient in daily_nutrition.columns:
-            if len(daily_nutrition[nutrient]) > 0:
-                summary["daily_averages"][nutrient] = {
-                    "average": round(daily_nutrition[nutrient].mean(), 1),
-                    "min": round(daily_nutrition[nutrient].min(), 1),
-                    "max": round(daily_nutrition[nutrient].max(), 1)
+        return summary
+    
+    def get_sleep_summary(self, days_back: int = 14) -> Dict:
+        """Get sleep summary and patterns from Apple Health"""
+        all_data = self.extract_diabetes_data(days_back)
+        
+        if all_data.empty:
+            return {}
+        
+        sleep_data = all_data[all_data['data_type'] == 'sleep']
+        
+        if sleep_data.empty:
+            return {"message": "No sleep data found in Apple Health"}
+        
+        # Group by date to get nightly sleep totals
+        daily_sleep = sleep_data.groupby('date').agg({
+            'sleep_duration_hours': 'sum',
+            'sleep_stage': lambda x: list(x.unique())
+        })
+        
+        # Calculate sleep statistics
+        total_sleep_hours = daily_sleep['sleep_duration_hours']
+        
+        summary = {
+            "analysis_period": f"Last {days_back} days",
+            "nights_with_data": len(daily_sleep),
+            "average_sleep_hours": round(total_sleep_hours.mean(), 1) if not total_sleep_hours.empty else None,
+            "min_sleep_hours": round(total_sleep_hours.min(), 1) if not total_sleep_hours.empty else None,
+            "max_sleep_hours": round(total_sleep_hours.max(), 1) if not total_sleep_hours.empty else None,
+            "sleep_consistency": round(total_sleep_hours.std(), 1) if not total_sleep_hours.empty else None,
+            "sleep_stages_detected": list(sleep_data['sleep_stage'].unique()),
+            "weekly_pattern": {}
+        }
+        
+        # Weekly sleep patterns
+        sleep_data['day_of_week'] = sleep_data['timestamp'].dt.day_name()
+        weekly_sleep = sleep_data.groupby('day_of_week')['sleep_duration_hours'].sum()
+        summary["weekly_pattern"] = {day: round(hours, 1) for day, hours in weekly_sleep.items()}
+        
+        return summary
+    
+    def get_exercise_summary(self, days_back: int = 14) -> Dict:
+        """Get exercise summary and patterns from Apple Health"""
+        all_data = self.extract_diabetes_data(days_back)
+        
+        if all_data.empty:
+            return {}
+        
+        exercise_data = all_data[all_data['data_type'] == 'workout']
+        
+        if exercise_data.empty:
+            return {"message": "No exercise data found in Apple Health"}
+        
+        # Calculate exercise statistics
+        total_workouts = len(exercise_data)
+        total_duration = exercise_data['duration_minutes'].sum()
+        total_calories = exercise_data['total_energy_burned'].sum()
+        
+        # Group by workout type
+        workout_types = exercise_data.groupby('workout_type').agg({
+            'duration_minutes': ['count', 'sum', 'mean'],
+            'total_energy_burned': 'sum'
+        }).round(1)
+        
+        # Weekly exercise pattern
+        exercise_data['day_of_week'] = exercise_data['timestamp'].dt.day_name()
+        weekly_exercise = exercise_data.groupby('day_of_week').agg({
+            'duration_minutes': 'sum',
+            'workout_type': 'count'
+        })
+        
+        summary = {
+            "analysis_period": f"Last {days_back} days",
+            "total_workouts": total_workouts,
+            "total_exercise_minutes": round(total_duration, 1),
+            "total_calories_burned": round(total_calories, 1),
+            "average_workout_duration": round(exercise_data['duration_minutes'].mean(), 1) if total_workouts > 0 else 0,
+            "workouts_per_week": round((total_workouts / days_back) * 7, 1),
+            "workout_types": {
+                workout_type: {
+                    "count": int(stats[('duration_minutes', 'count')]),
+                    "total_minutes": float(stats[('duration_minutes', 'sum')]),
+                    "avg_duration": float(stats[('duration_minutes', 'mean')]),
+                    "total_calories": float(stats[('total_energy_burned', 'sum')])
                 }
+                for workout_type, stats in workout_types.iterrows()
+            },
+            "weekly_pattern": {
+                day: {
+                    "total_minutes": round(float(data['duration_minutes']), 1),
+                    "workout_count": int(data['workout_type'])
+                }
+                for day, data in weekly_exercise.iterrows()
+            }
+        }
         
         return summary
     
