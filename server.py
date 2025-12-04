@@ -553,8 +553,10 @@ def start_cgm_server(port: int = 5000) -> dict:
         return {"error": str(e)}
 
 if __name__ == "__main__":
-    print("🩸 Starting 5-Minute CGM Monitoring System...")
-    print("=" * 50)
+    # When running as MCP server, all output must go to stderr, not stdout
+    # MCP communicates via JSON on stdout, so any print() will break it
+    logger.info("🩸 Starting 5-Minute CGM Monitoring System...")
+    logger.info("=" * 50)
     
     # Start Flask server
     flask_thread = threading.Thread(target=run_flask_server, args=(5000,), daemon=True)
@@ -563,18 +565,18 @@ if __name__ == "__main__":
     # Get and display server information
     server_ip = get_server_url()
     
-    print(f"✅ CGM Server Started Successfully!")
-    print(f"📡 Data Endpoint: http://{server_ip}:5000/health-data")
-    print(f"📊 Status Page: http://{server_ip}:5000/cgm-status") 
-    print(f"🔗 Local Status: http://localhost:5000/cgm-status")
-    print("=" * 50)
-    print("📱 Health Auto Export Configuration:")
-    print(f"   URL: http://{server_ip}:5000/health-data")
-    print(f"   Frequency: Quantity=5, Interval=minutes")
-    print(f"   Data: Blood Glucose only")
-    print(f"   Format: JSON")
-    print("=" * 50)
-    print("🚀 Starting MCP server...")
+    logger.info(f"✅ CGM Server Started Successfully!")
+    logger.info(f"📡 Data Endpoint: http://{server_ip}:5000/health-data")
+    logger.info(f"📊 Status Page: http://{server_ip}:5000/cgm-status") 
+    logger.info(f"🔗 Local Status: http://localhost:5000/cgm-status")
+    logger.info("=" * 50)
+    logger.info("📱 Health Auto Export Configuration:")
+    logger.info(f"   URL: http://{server_ip}:5000/health-data")
+    logger.info(f"   Frequency: Quantity=5, Interval=minutes")
+    logger.info(f"   Data: Blood Glucose only")
+    logger.info(f"   Format: JSON")
+    logger.info("=" * 50)
+    logger.info("🚀 Starting MCP server...")
     
     # Start MCP server
     mcp.run(transport='stdio')

@@ -1,8 +1,18 @@
 import pandas as pd
 import numpy as np
 import json
+import sys
+import logging
 from datetime import datetime, timedelta
 from typing import Union, Dict, Any, List
+
+# Configure logging to go to stderr (not stdout) so MCP doesn't try to parse it as JSON
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
 
 # Global variable to hold patient data
 PATIENT_DATA = pd.DataFrame()
@@ -22,11 +32,11 @@ def load_json_data(json_file_path: str = "TidepoolExport_jan25_july25.json") -> 
         df = pd.DataFrame(json_data)
         
         if df.empty:
-            print("Warning: JSON file is empty")
+            logger.warning("Warning: JSON file is empty")
             return df
             
-        print(f"Loaded {len(df)} records from JSON")
-        print(f"Data types found: {df['type'].value_counts().to_dict()}")
+        logger.info(f"Loaded {len(df)} records from JSON")
+        logger.debug(f"Data types found: {df['type'].value_counts().to_dict()}")
         
         # Process timestamps with robust format handling
         if 'time' in df.columns:
@@ -92,19 +102,19 @@ def load_json_data(json_file_path: str = "TidepoolExport_jan25_july25.json") -> 
             # Update the global variable with glucose data
             PATIENT_DATA = glucose_data[['SerialNumber', 'EventDateTime', 'Readings (mg/dL)', 'data_source', 'type']].copy()
             
-        print(f"Processed {len(PATIENT_DATA)} glucose records")
-        print(f"Unique patients/devices: {PATIENT_DATA['SerialNumber'].nunique()}")
+        logger.info(f"Processed {len(PATIENT_DATA)} glucose records")
+        logger.info(f"Unique patients/devices: {PATIENT_DATA['SerialNumber'].nunique()}")
         
         return PATIENT_DATA
         
     except FileNotFoundError:
-        print(f"Error: JSON file '{json_file_path}' not found")
+        logger.error(f"Error: JSON file '{json_file_path}' not found")
         return pd.DataFrame()
     except json.JSONDecodeError as e:
-        print(f"Error: Invalid JSON format - {e}")
+        logger.error(f"Error: Invalid JSON format - {e}")
         return pd.DataFrame()
     except Exception as e:
-        print(f"Error loading JSON data: {e}")
+        logger.error(f"Error loading JSON data: {e}")
         return pd.DataFrame()
 
 def get_available_patients() -> List[str]:
@@ -506,18 +516,20 @@ def calculate_time_in_range(glucose_series: pd.Series) -> dict:
     }
 
 # Initialize data on import
-print("Loading JSON data...")
+# Use logging (stderr) instead of print (stdout) so MCP doesn't try to parse it as JSON
+logger.info("Loading JSON data...")
 try:
     PATIENT_DATA = load_json_data()
     if not PATIENT_DATA.empty:
-        print(f"✓ Loaded data for {len(get_available_patients())} patients/devices")
+        logger.info(f"✓ Loaded data for {len(get_available_patients())} patients/devices")
     else:
-        print("⚠ No data loaded - check JSON file")
+        logger.warning("⚠ No data loaded - check JSON file")
 except Exception as e:
-    print(f"⚠ Error during initialization: {e}")
+    logger.warning(f"⚠ Error during initialization: {e}")
 
 # Testing section
 if __name__ == "__main__":
+    # When running as script, print to stdout is fine
     print("=== Testing JSON Patient Data Module ===")
     
     # Test data loading
