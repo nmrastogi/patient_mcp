@@ -7,7 +7,7 @@ from patient_data import (
 )
 from flask import Flask, request, jsonify
 import json
-import sqlite3
+import pymysql
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -16,6 +16,7 @@ import threading
 import os
 import sys
 import socket
+from db_config import db_config
 
 logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(sys.stderr)])
 logger = logging.getLogger(__name__)
@@ -23,101 +24,106 @@ logger = logging.getLogger(__name__)
 class HighFrequencyCGMReceiver:
     """
     Optimized receiver for high-frequency CGM data (5-minute intervals)
+    Uses Amazon RDS MySQL for storage
     """
     
-    def __init__(self, db_path: str = "cgm_5min_data.db"):
-        self.db_path = db_path
+    def __init__(self):
+        self.db_config = db_config
         self.init_database()
     
     def init_database(self):
-        """Initialize SQLite database optimized for high-frequency CGM data"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Optimized table for frequent glucose readings
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cgm_readings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id TEXT,
-                glucose_mg_dl REAL,
-                timestamp TEXT,
-                date TEXT,
-                hour INTEGER,
-                minute INTEGER,
-                source_name TEXT,
-                automation_type TEXT,
-                session_id TEXT,
-                raw_data TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(patient_id, timestamp)
-            )
-        ''')
-        
-        # Index for fast time-based queries
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cgm_timestamp 
-            ON cgm_readings(patient_id, timestamp DESC)
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cgm_date_hour 
-            ON cgm_readings(patient_id, date, hour)
-        ''')
-        
-        # Table for other health metrics (hourly)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS health_metrics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id TEXT,
-                metric_name TEXT,
-                value REAL,
-                unit TEXT,
-                timestamp TEXT,
-                date TEXT,
-                source_name TEXT,
-                automation_type TEXT,
-                session_id TEXT,
-                raw_data TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(patient_id, metric_name, timestamp)
-            )
-        ''')
-        
-        # Table for workouts
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS workouts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id TEXT,
-                workout_type TEXT,
-                duration_minutes REAL,
-                total_distance REAL,
-                distance_unit TEXT,
-                total_energy REAL,
-                energy_unit TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                source_name TEXT,
-                automation_type TEXT,
-                session_id TEXT,
-                raw_data TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(patient_id, workout_type, start_time)
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"High-frequency CGM database initialized at {self.db_path}")
+        """Initialize MySQL database optimized for high-frequency CGM data"""
+        conn = None
+        try:
+            conn = self.db_config.get_connection()
+            cursor = conn.cursor()
+            
+            # Optimized table for frequent glucose readings
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cgm_readings (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    patient_id VARCHAR(255),
+                    glucose_mg_dl DOUBLE,
+                    timestamp DATETIME,
+                    date DATE,
+                    hour INT,
+                    minute INT,
+                    source_name VARCHAR(255),
+                    automation_type VARCHAR(255),
+                    session_id VARCHAR(255),
+                    raw_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_patient_timestamp (patient_id, timestamp),
+                    INDEX idx_cgm_timestamp (patient_id, timestamp DESC),
+                    INDEX idx_cgm_date_hour (patient_id, date, hour)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ''')
+            
+            # Table for other health metrics (hourly)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS health_metrics (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    patient_id VARCHAR(255),
+                    metric_name VARCHAR(255),
+                    value DOUBLE,
+                    unit VARCHAR(50),
+                    timestamp DATETIME,
+                    date DATE,
+                    source_name VARCHAR(255),
+                    automation_type VARCHAR(255),
+                    session_id VARCHAR(255),
+                    raw_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_patient_metric_timestamp (patient_id, metric_name, timestamp),
+                    INDEX idx_health_timestamp (patient_id, timestamp DESC)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ''')
+            
+            # Table for workouts
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS workouts (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    patient_id VARCHAR(255),
+                    workout_type VARCHAR(255),
+                    duration_minutes DOUBLE,
+                    total_distance DOUBLE,
+                    distance_unit VARCHAR(50),
+                    total_energy DOUBLE,
+                    energy_unit VARCHAR(50),
+                    start_time DATETIME,
+                    end_time DATETIME,
+                    source_name VARCHAR(255),
+                    automation_type VARCHAR(255),
+                    session_id VARCHAR(255),
+                    raw_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_patient_workout_start (patient_id, workout_type, start_time),
+                    INDEX idx_workout_timestamp (patient_id, start_time DESC)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ''')
+            
+            conn.commit()
+            logger.info(f"✅ High-frequency CGM MySQL database initialized on {self.db_config.host}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error initializing database: {e}")
+            if conn:
+                conn.rollback()
+            raise
+        finally:
+            if conn:
+                conn.close()
     
     def process_cgm_data(self, data: Dict, patient_id: str = None, session_id: str = None, automation_type: str = None) -> Dict:
         """
         Process high-frequency CGM data from Health Auto Export
         """
+        conn = None
         try:
             if not patient_id:
                 patient_id = "cgm_patient"
             
-            conn = sqlite3.connect(self.db_path)
+            conn = self.db_config.get_connection()
             cursor = conn.cursor()
             
             processed_glucose = 0
@@ -162,14 +168,15 @@ class HighFrequencyCGMReceiver:
                             dt = datetime.strptime(clean_timestamp, '%Y-%m-%d %H:%M:%S')
                         
                         date_str = dt.strftime('%Y-%m-%d')
-                        iso_timestamp = dt.isoformat()
+                        # MySQL uses DATETIME format
+                        mysql_timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
                         hour = dt.hour
                         minute = dt.minute
                     except Exception as e:
                         logger.warning(f"Error parsing timestamp {timestamp}: {e}")
                         dt = datetime.now()
                         date_str = dt.strftime('%Y-%m-%d')
-                        iso_timestamp = dt.isoformat()
+                        mysql_timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
                         hour = dt.hour
                         minute = dt.minute
                     
@@ -180,32 +187,32 @@ class HighFrequencyCGMReceiver:
                         # Store in CGM table for fast access
                         try:
                             cursor.execute('''
-                                INSERT OR IGNORE INTO cgm_readings 
+                                INSERT IGNORE INTO cgm_readings 
                                 (patient_id, glucose_mg_dl, timestamp, date, hour, minute, 
                                  source_name, automation_type, session_id, raw_data)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (patient_id, value, iso_timestamp, date_str, hour, minute,
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (patient_id, value, mysql_timestamp, date_str, hour, minute,
                                   source_name, automation_type, session_id, json.dumps(item)))
                             
                             processed_glucose += 1
                             
-                        except sqlite3.Error as e:
+                        except pymysql.Error as e:
                             logger.warning(f"Database error inserting CGM reading: {e}")
                             continue
                     else:
                         # Store other metrics in general table
                         try:
                             cursor.execute('''
-                                INSERT OR IGNORE INTO health_metrics 
+                                INSERT IGNORE INTO health_metrics 
                                 (patient_id, metric_name, value, unit, timestamp, date, 
                                  source_name, automation_type, session_id, raw_data)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (patient_id, metric_name, value, unit, iso_timestamp, date_str,
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (patient_id, metric_name, value, unit, mysql_timestamp, date_str,
                                   source_name, automation_type, session_id, json.dumps(item)))
                             
                             processed_other += 1
                             
-                        except sqlite3.Error as e:
+                        except pymysql.Error as e:
                             logger.warning(f"Database error inserting health metric: {e}")
                             continue
                         
@@ -214,7 +221,6 @@ class HighFrequencyCGMReceiver:
                     continue
             
             conn.commit()
-            conn.close()
             
             result = {
                 "status": "success",
@@ -235,82 +241,119 @@ class HighFrequencyCGMReceiver:
             
         except Exception as e:
             logger.error(f"Error processing CGM data: {e}")
+            if conn:
+                conn.rollback()
             return {"status": "error", "message": str(e), "patient_id": patient_id}
+        finally:
+            if conn:
+                conn.close()
     
     def get_recent_cgm_readings(self, patient_id: str = "cgm_patient", minutes_back: int = 60) -> List[Dict]:
         """Get recent CGM readings (optimized for 5-minute frequency)"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        end_time = datetime.now()
-        start_time = end_time - timedelta(minutes=minutes_back)
-        
-        cursor.execute('''
-            SELECT timestamp, glucose_mg_dl, source_name, automation_type
-            FROM cgm_readings 
-            WHERE patient_id = ? 
-              AND timestamp >= ?
-            ORDER BY timestamp DESC
-            LIMIT 100
-        ''', (patient_id, start_time.isoformat()))
-        
-        results = cursor.fetchall()
-        conn.close()
-        
-        return [
-            {
-                "timestamp": row[0],
-                "glucose_mg_dl": row[1],
-                "source": row[2],
-                "automation_type": row[3],
-                "minutes_ago": round((end_time - datetime.fromisoformat(row[0])).total_seconds() / 60, 1)
-            }
-            for row in results
-        ]
+        conn = None
+        try:
+            conn = self.db_config.get_connection()
+            cursor = conn.cursor()
+            
+            end_time = datetime.now()
+            start_time = end_time - timedelta(minutes=minutes_back)
+            
+            cursor.execute('''
+                SELECT timestamp, glucose_mg_dl, source_name, automation_type
+                FROM cgm_readings 
+                WHERE patient_id = %s 
+                  AND timestamp >= %s
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ''', (patient_id, start_time))
+            
+            results = cursor.fetchall()
+            
+            readings = []
+            for row in results:
+                timestamp = row['timestamp']
+                if isinstance(timestamp, datetime):
+                    timestamp_str = timestamp.isoformat()
+                    timestamp_dt = timestamp
+                else:
+                    timestamp_str = str(timestamp)
+                    timestamp_dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                
+                readings.append({
+                    "timestamp": timestamp_str,
+                    "glucose_mg_dl": float(row['glucose_mg_dl']) if row['glucose_mg_dl'] is not None else None,
+                    "source": row['source_name'],
+                    "automation_type": row['automation_type'],
+                    "minutes_ago": round((end_time - timestamp_dt).total_seconds() / 60, 1)
+                })
+            
+            return readings
+        except Exception as e:
+            logger.error(f"Error getting recent CGM readings: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
     
     def get_cgm_stats(self, patient_id: str = "cgm_patient", hours_back: int = 24) -> Dict:
         """Get CGM statistics for the specified time period"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=hours_back)
-        
-        cursor.execute('''
-            SELECT COUNT(*), AVG(glucose_mg_dl), MIN(glucose_mg_dl), MAX(glucose_mg_dl),
-                   MIN(timestamp), MAX(timestamp)
-            FROM cgm_readings 
-            WHERE patient_id = ? 
-              AND timestamp >= ?
-        ''', (patient_id, start_time.isoformat()))
-        
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result and result[0] > 0:
-            count, avg_glucose, min_glucose, max_glucose, first_reading, last_reading = result
+        conn = None
+        try:
+            conn = self.db_config.get_connection()
+            cursor = conn.cursor()
             
-            # Calculate expected vs actual readings (12 per hour for 5-min frequency)
-            expected_readings = hours_back * 12
-            data_completeness = (count / expected_readings) * 100 if expected_readings > 0 else 0
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=hours_back)
             
-            return {
-                "total_readings": count,
-                "expected_readings": expected_readings,
-                "data_completeness_percent": round(data_completeness, 1),
-                "average_glucose": round(avg_glucose, 1),
-                "min_glucose": round(min_glucose, 1),
-                "max_glucose": round(max_glucose, 1),
-                "glucose_range": round(max_glucose - min_glucose, 1),
-                "first_reading_time": first_reading,
-                "last_reading_time": last_reading,
-                "time_range_hours": hours_back
-            }
-        else:
+            cursor.execute('''
+                SELECT COUNT(*) as count, AVG(glucose_mg_dl) as avg_glucose, 
+                       MIN(glucose_mg_dl) as min_glucose, MAX(glucose_mg_dl) as max_glucose,
+                       MIN(timestamp) as first_reading, MAX(timestamp) as last_reading
+                FROM cgm_readings 
+                WHERE patient_id = %s 
+                  AND timestamp >= %s
+            ''', (patient_id, start_time))
+            
+            result = cursor.fetchone()
+            
+            if result and result['count'] > 0:
+                count = result['count']
+                avg_glucose = float(result['avg_glucose']) if result['avg_glucose'] else 0
+                min_glucose = float(result['min_glucose']) if result['min_glucose'] else 0
+                max_glucose = float(result['max_glucose']) if result['max_glucose'] else 0
+                first_reading = result['first_reading']
+                last_reading = result['last_reading']
+                
+                # Calculate expected vs actual readings (12 per hour for 5-min frequency)
+                expected_readings = hours_back * 12
+                data_completeness = (count / expected_readings) * 100 if expected_readings > 0 else 0
+                
+                return {
+                    "total_readings": count,
+                    "expected_readings": expected_readings,
+                    "data_completeness_percent": round(data_completeness, 1),
+                    "average_glucose": round(avg_glucose, 1),
+                    "min_glucose": round(min_glucose, 1),
+                    "max_glucose": round(max_glucose, 1),
+                    "glucose_range": round(max_glucose - min_glucose, 1),
+                    "first_reading_time": first_reading.isoformat() if isinstance(first_reading, datetime) else str(first_reading),
+                    "last_reading_time": last_reading.isoformat() if isinstance(last_reading, datetime) else str(last_reading),
+                    "time_range_hours": hours_back
+                }
+            else:
+                return {
+                    "total_readings": 0,
+                    "message": "No CGM data found in specified time range"
+                }
+        except Exception as e:
+            logger.error(f"Error getting CGM stats: {e}")
             return {
                 "total_readings": 0,
-                "message": "No CGM data found in specified time range"
+                "message": f"Error retrieving stats: {str(e)}"
             }
+        finally:
+            if conn:
+                conn.close()
 
 # Initialize CGM receiver
 cgm_receiver = HighFrequencyCGMReceiver()
