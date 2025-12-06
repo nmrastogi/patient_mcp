@@ -255,7 +255,6 @@ class HighFrequencyCGMReceiver:
             end_time = datetime.now()
             start_time = end_time - timedelta(minutes=minutes_back)
         
-            
             results = session.query(Glucose).filter(
                 Glucose.timestamp >= start_time
             ).order_by(Glucose.timestamp.desc()).limit(100).all()
@@ -284,10 +283,10 @@ class HighFrequencyCGMReceiver:
         session = None
         try:
             session = self.db_config.get_session()
-        
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=hours_back)
-        
+            
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=hours_back)
+            
             from sqlalchemy import func
             
             result = session.query(
@@ -308,28 +307,28 @@ class HighFrequencyCGMReceiver:
                 max_glucose = float(result.max_glucose) if result.max_glucose else 0
                 first_reading = result.first_reading
                 last_reading = result.last_reading
-            
-            # Calculate expected vs actual readings (12 per hour for 5-min frequency)
-            expected_readings = hours_back * 12
-            data_completeness = (count / expected_readings) * 100 if expected_readings > 0 else 0
-            
-            return {
-                "total_readings": count,
-                "expected_readings": expected_readings,
-                "data_completeness_percent": round(data_completeness, 1),
-                "average_glucose": round(avg_glucose, 1),
-                "min_glucose": round(min_glucose, 1),
-                "max_glucose": round(max_glucose, 1),
-                "glucose_range": round(max_glucose - min_glucose, 1),
+                
+                # Calculate expected vs actual readings (12 per hour for 5-min frequency)
+                expected_readings = hours_back * 12
+                data_completeness = (count / expected_readings) * 100 if expected_readings > 0 else 0
+                
+                return {
+                    "total_readings": count,
+                    "expected_readings": expected_readings,
+                    "data_completeness_percent": round(data_completeness, 1),
+                    "average_glucose": round(avg_glucose, 1),
+                    "min_glucose": round(min_glucose, 1),
+                    "max_glucose": round(max_glucose, 1),
+                    "glucose_range": round(max_glucose - min_glucose, 1),
                     "first_reading_time": first_reading.isoformat() if first_reading else None,
                     "last_reading_time": last_reading.isoformat() if last_reading else None,
-                "time_range_hours": hours_back
-            }
-        else:
-            return {
-                "total_readings": 0,
-                "message": "No CGM data found in specified time range"
-            }
+                    "time_range_hours": hours_back
+                }
+            else:
+                return {
+                    "total_readings": 0,
+                    "message": "No CGM data found in specified time range"
+                }
         except Exception as e:
             logger.error(f"Error getting CGM stats: {e}")
             return {
@@ -513,7 +512,7 @@ def get_server_url():
 def run_flask_server(port: int = 5000):
     """Run Flask server for CGM data reception - output suppressed to avoid breaking MCP"""
     try:
-    logger.info(f"🏥 Starting 5-Minute CGM Flask server on port {port}")
+        logger.info(f"🏥 Starting 5-Minute CGM Flask server on port {port}")
         
         # Completely suppress Flask's stdout output to avoid breaking MCP protocol
         import sys
@@ -784,15 +783,15 @@ if __name__ == "__main__":
         
         # Start Flask server in background (non-blocking)
         flask_thread = threading.Thread(target=run_flask_server, args=(flask_port,), daemon=True)
-    flask_thread.start()
+        flask_thread.start()
         
         # Give Flask a moment to start
         import time
         time.sleep(0.5)
-    
-    # Get and display server information
-    server_ip = get_server_url()
-    
+        
+        # Get and display server information
+        server_ip = get_server_url()
+        
         logger.info(f"✅ CGM Server Started Successfully!")
         logger.info(f"📡 Data Endpoint: http://{server_ip}:{flask_port}/health-data")
         logger.info(f"📊 Status Page: http://{server_ip}:{flask_port}/cgm-status") 
