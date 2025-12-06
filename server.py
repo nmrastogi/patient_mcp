@@ -340,18 +340,17 @@ class HighFrequencyCGMReceiver:
                 session.close()
     
     def get_glucose_data(self, patient_id: str = None, start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
-        """Get glucose data from RDS using SQLAlchemy"""
+        """Get glucose data from RDS using SQLAlchemy (blood_glucose table)"""
         session = None
         try:
             session = self.db_config.get_session()
             
-            query = session.query(Glucose).filter(Glucose.patient_id == patient_id)
+            query = session.query(Glucose)  # No patient_id filter - table doesn't have it
             
             if start_date and end_date:
-                from datetime import date as date_type
-                start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
-                query = query.filter(Glucose.date >= start_dt, Glucose.date <= end_dt)
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)  # Include end date
+                query = query.filter(Glucose.timestamp >= start_dt, Glucose.timestamp < end_dt)
             
             results = query.order_by(Glucose.timestamp.desc()).limit(limit).all()
             
@@ -727,20 +726,30 @@ if __name__ == "__main__":
     logger.info("🩸 Starting 5-Minute CGM Monitoring System...")
     logger.info("=" * 50)
     
+    # Try to start Flask server on port 5000, fallback to 5001 if busy
+    import socket
+    flask_port = 5000
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex(('127.0.0.1', 5000))
+    sock.close()
+    if result == 0:
+        logger.warning(f"⚠️  Port 5000 is in use, trying port 5001...")
+        flask_port = 5001
+    
     # Start Flask server
-    flask_thread = threading.Thread(target=run_flask_server, args=(5000,), daemon=True)
+    flask_thread = threading.Thread(target=run_flask_server, args=(flask_port,), daemon=True)
     flask_thread.start()
     
     # Get and display server information
     server_ip = get_server_url()
     
     logger.info(f"✅ CGM Server Started Successfully!")
-    logger.info(f"📡 Data Endpoint: http://{server_ip}:5000/health-data")
-    logger.info(f"📊 Status Page: http://{server_ip}:5000/cgm-status") 
-    logger.info(f"🔗 Local Status: http://localhost:5000/cgm-status")
+    logger.info(f"📡 Data Endpoint: http://{server_ip}:{flask_port}/health-data")
+    logger.info(f"📊 Status Page: http://{server_ip}:{flask_port}/cgm-status") 
+    logger.info(f"🔗 Local Status: http://localhost:{flask_port}/cgm-status")
     logger.info("=" * 50)
     logger.info("📱 Health Auto Export Configuration:")
-    logger.info(f"   URL: http://{server_ip}:5000/health-data")
+    logger.info(f"   URL: http://{server_ip}:{flask_port}/health-data")
     logger.info(f"   Frequency: Quantity=5, Interval=minutes")
     logger.info(f"   Data: Blood Glucose only")
     logger.info(f"   Format: JSON")
