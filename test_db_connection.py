@@ -15,56 +15,56 @@ logger = logging.getLogger(__name__)
 
 def test_connection():
     """Test database connection and table creation"""
-    print("=" * 60)
-    print("Testing Amazon RDS MySQL Connection")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Testing Amazon RDS MySQL Connection")
+    logger.info("=" * 60)
     
     # Display configuration (without password)
-    print(f"\n📋 Configuration:")
-    print(f"   Host: {db_config.host}")
-    print(f"   Port: {db_config.port}")
-    print(f"   User: {db_config.user}")
-    print(f"   Database: {db_config.database}")
-    print(f"   Password: {'*' * len(db_config.password) if db_config.password else '(not set)'}")
+    logger.info(f"\n📋 Configuration:")
+    logger.info(f"   Host: {db_config.host}")
+    logger.info(f"   Port: {db_config.port}")
+    logger.info(f"   User: {db_config.user}")
+    logger.info(f"   Database: {db_config.database}")
+    logger.info(f"   Password: {'*' * len(db_config.password) if db_config.password else '(not set)'}")
     
     # Test connection
-    print(f"\n🔌 Testing connection...")
+    logger.info(f"\n🔌 Testing connection...")
     try:
         if db_config.test_connection():
-            print("✅ Connection successful!")
+            logger.info("✅ Connection successful!")
         else:
-            print("❌ Connection failed!")
+            logger.error("❌ Connection failed!")
             return False
     except Exception as e:
-        print(f"❌ Connection error: {e}")
+        logger.error(f"❌ Connection error: {e}")
         return False
     
     # Test table creation (this will be done by HighFrequencyCGMReceiver)
-    print(f"\n📊 Testing table initialization...")
+    logger.info(f"\n📊 Testing table initialization...")
     try:
         from server import HighFrequencyCGMReceiver
         receiver = HighFrequencyCGMReceiver()
-        print("✅ Tables initialized successfully!")
+        logger.info("✅ Tables initialized successfully!")
     except Exception as e:
-        print(f"❌ Table initialization error: {e}")
+        logger.error(f"❌ Table initialization error: {e}")
         return False
     
-    # Test a simple query
-    print(f"\n🔍 Testing database query...")
+    # Test a simple query using SQLAlchemy
+    logger.info(f"\n🔍 Testing database query...")
     try:
-        conn = db_config.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as count FROM cgm_readings")
-        result = cursor.fetchone()
-        count = result['count'] if result else 0
-        print(f"✅ Query successful! Found {count} CGM readings in database.")
-        conn.close()
+        from models import Glucose
+        from sqlalchemy import func
+        
+        session = db_config.get_session()
+        count = session.query(func.count(Glucose.id)).scalar()
+        session.close()
+        logger.info(f"✅ Query successful! Found {count} glucose readings in database.")
     except Exception as e:
-        print(f"⚠️  Query test: {e} (This is OK if tables are empty)")
+        logger.warning(f"⚠️  Query test: {e} (This is OK if tables are empty)")
     
-    print("\n" + "=" * 60)
-    print("✅ All tests passed! Your RDS MySQL connection is working.")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("✅ All tests passed! Your RDS MySQL connection is working.")
+    logger.info("=" * 60)
     return True
 
 if __name__ == "__main__":
@@ -72,10 +72,10 @@ if __name__ == "__main__":
         success = test_connection()
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
-        print("\n\n⚠️  Test interrupted by user")
+        logger.warning("\n\n⚠️  Test interrupted by user")
         sys.exit(1)
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        logger.error(f"\n❌ Unexpected error: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

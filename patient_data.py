@@ -529,44 +529,44 @@ except Exception as e:
 
 # Testing section
 if __name__ == "__main__":
-    # When running as script, print to stdout is fine
-    print("=== Testing JSON Patient Data Module ===")
+    # When running as script, use logger for consistency
+    logger.info("=== Testing JSON Patient Data Module ===")
     
     # Test data loading
-    print(f"Data loaded: {not PATIENT_DATA.empty}")
-    print(f"Total glucose records: {len(PATIENT_DATA)}")
+    logger.info(f"Data loaded: {not PATIENT_DATA.empty}")
+    logger.info(f"Total glucose records: {len(PATIENT_DATA)}")
     
     if not PATIENT_DATA.empty:
         available_patients = get_available_patients()
-        print(f"Available patients: {available_patients}")
+        logger.info(f"Available patients: {available_patients}")
         
         if available_patients:
             # Test with first available patient
             first_patient = available_patients[0]
-            print(f"\nTesting with patient ID: {first_patient}")
+            logger.info(f"\nTesting with patient ID: {first_patient}")
             
             # Test all functions
-            print("\n1. Testing basic summary:")
+            logger.info("\n1. Testing basic summary:")
             result = fetch_patient_summary(first_patient)
-            print(f"Readings found: {result.get('total_readings', 0)}")
+            logger.info(f"Readings found: {result.get('total_readings', 0)}")
             
-            print("\n2. Testing anomaly detection:")
+            logger.info("\n2. Testing anomaly detection:")
             anomalies = detect_anomalous_glucose_events(first_patient)
-            print(f"Anomalies found: {anomalies.get('total_anomalies', 0)}")
+            logger.info(f"Anomalies found: {anomalies.get('total_anomalies', 0)}")
             
-            print("\n3. Testing hypo detection:")
+            logger.info("\n3. Testing hypo detection:")
             hypo = find_last_hypoglycemic_event(first_patient)
             if hypo.get('last_hypo_event'):
-                print(f"Last hypo: {hypo['last_hypo_event']['days_ago']} days ago")
+                logger.info(f"Last hypo: {hypo['last_hypo_event']['days_ago']} days ago")
             else:
-                print("No hypo events found")
+                logger.info("No hypo events found")
             
-            print("\n4. Testing pattern analysis:")
+            logger.info("\n4. Testing pattern analysis:")
             patterns = analyze_glucose_patterns(first_patient)
             if 'peak_glucose_time' in patterns:
-                print(f"Peak glucose time: {patterns['peak_glucose_time']}")
-                print(f"Dawn phenomenon: {patterns['dawn_phenomenon']['detected']}")
+                logger.info(f"Peak glucose time: {patterns['peak_glucose_time']}")
+                logger.info(f"Dawn phenomenon: {patterns['dawn_phenomenon']['detected']}")
         else:
-            print("No patients found in data")
+            logger.warning("No patients found in data")
     else:
-        print("❌ No data loaded from JSON")
+        logger.error("❌ No data loaded from JSON")
