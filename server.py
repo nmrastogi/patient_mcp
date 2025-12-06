@@ -32,20 +32,20 @@ class HighFrequencyCGMReceiver:
         self.init_database()
     
     def init_database(self):
-        """Initialize MySQL database optimized for high-frequency CGM data"""
+        """Initialize MySQL database with glucose, sleep, and exercise tables"""
         conn = None
         try:
             conn = self.db_config.get_connection()
             cursor = conn.cursor()
             
-            # Optimized table for frequent glucose readings
+            # Table 1: Glucose readings
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS cgm_readings (
+                CREATE TABLE IF NOT EXISTS glucose (
                     id INT AUTO_INCREMENT PRIMARY KEY,
-                    patient_id VARCHAR(255),
-                    glucose_mg_dl DOUBLE,
-                    timestamp DATETIME,
-                    date DATE,
+                    patient_id VARCHAR(255) NOT NULL,
+                    glucose_mg_dl DOUBLE NOT NULL,
+                    timestamp DATETIME NOT NULL,
+                    date DATE NOT NULL,
                     hour INT,
                     minute INT,
                     source_name VARCHAR(255),
@@ -54,56 +54,62 @@ class HighFrequencyCGMReceiver:
                     raw_data TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE KEY unique_patient_timestamp (patient_id, timestamp),
-                    INDEX idx_cgm_timestamp (patient_id, timestamp DESC),
-                    INDEX idx_cgm_date_hour (patient_id, date, hour)
+                    INDEX idx_glucose_timestamp (patient_id, timestamp DESC),
+                    INDEX idx_glucose_date_hour (patient_id, date, hour),
+                    INDEX idx_glucose_date (date)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
             
-            # Table for other health metrics (hourly)
+            # Table 2: Sleep data
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS health_metrics (
+                CREATE TABLE IF NOT EXISTS sleep (
                     id INT AUTO_INCREMENT PRIMARY KEY,
-                    patient_id VARCHAR(255),
-                    metric_name VARCHAR(255),
-                    value DOUBLE,
-                    unit VARCHAR(50),
-                    timestamp DATETIME,
-                    date DATE,
+                    patient_id VARCHAR(255) NOT NULL,
+                    start_time DATETIME NOT NULL,
+                    end_time DATETIME NOT NULL,
+                    duration_hours DOUBLE,
+                    sleep_stage VARCHAR(50),
+                    date DATE NOT NULL,
                     source_name VARCHAR(255),
                     automation_type VARCHAR(255),
                     session_id VARCHAR(255),
                     raw_data TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY unique_patient_metric_timestamp (patient_id, metric_name, timestamp),
-                    INDEX idx_health_timestamp (patient_id, timestamp DESC)
+                    UNIQUE KEY unique_patient_sleep_start (patient_id, start_time),
+                    INDEX idx_sleep_timestamp (patient_id, start_time DESC),
+                    INDEX idx_sleep_date (date),
+                    INDEX idx_sleep_patient_date (patient_id, date)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
             
-            # Table for workouts
+            # Table 3: Exercise/workout data
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS workouts (
+                CREATE TABLE IF NOT EXISTS exercise (
                     id INT AUTO_INCREMENT PRIMARY KEY,
-                    patient_id VARCHAR(255),
+                    patient_id VARCHAR(255) NOT NULL,
                     workout_type VARCHAR(255),
+                    start_time DATETIME NOT NULL,
+                    end_time DATETIME,
                     duration_minutes DOUBLE,
                     total_distance DOUBLE,
                     distance_unit VARCHAR(50),
                     total_energy DOUBLE,
                     energy_unit VARCHAR(50),
-                    start_time DATETIME,
-                    end_time DATETIME,
+                    date DATE NOT NULL,
                     source_name VARCHAR(255),
                     automation_type VARCHAR(255),
                     session_id VARCHAR(255),
                     raw_data TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY unique_patient_workout_start (patient_id, workout_type, start_time),
-                    INDEX idx_workout_timestamp (patient_id, start_time DESC)
+                    UNIQUE KEY unique_patient_exercise_start (patient_id, workout_type, start_time),
+                    INDEX idx_exercise_timestamp (patient_id, start_time DESC),
+                    INDEX idx_exercise_date (date),
+                    INDEX idx_exercise_type (workout_type)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             ''')
             
             conn.commit()
-            logger.info(f"✅ High-frequency CGM MySQL database initialized on {self.db_config.host}")
+            logger.info(f"✅ Database tables initialized: glucose, sleep, exercise on {self.db_config.host}")
             
         except Exception as e:
             logger.error(f"❌ Error initializing database: {e}")
@@ -180,14 +186,68 @@ class HighFrequencyCGMReceiver:
                         hour = dt.hour
                         minute = dt.minute
                     
-                    # Check if this is glucose data
+                    # Route data to appropriate table: glucose, sleep, or exercise
                     is_glucose = any(term in metric_name.lower() for term in ['glucose', 'blood', 'bg'])
+                    is_sleep = any(term in metric_name.lower() for term in ['sleep', 'rest'])
+                    is_exercise = any(term in metric_name.lower() for term in ['workout', 'exercise', 'activity', 'fitness'])
                     
+                    # Check for sleep data (has start and end times)
+                    if 'startDate' in item and 'endDate' in item:
+                        try:
+                            sleep_start = datetime.fromisoformat(item['startDate'].replace('Z', '').replace('+00:00', ''))
+                            sleep_end = datetime.fromisoformat(item['endDate'].replace('Z', '').replace('+00:00', ''))
+                            duration_hours = (sleep_end - sleep_start).total_seconds() / 3600
+                            
+                            cursor.execute('''
+                                INSERT IGNORE INTO sleep 
+                                (patient_id, start_time, end_time, duration_hours, sleep_stage, date,
+                                 source_name, automation_type, session_id, raw_data)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (patient_id, sleep_start.strftime('%Y-%m-%d %H:%M:%S'), 
+                                  sleep_end.strftime('%Y-%m-%d %H:%M:%S'), duration_hours,
+                                  item.get('value', 'unknown'), date_str,
+                                  source_name, automation_type, session_id, json.dumps(item)))
+                            processed_other += 1
+                            continue
+                        except Exception as e:
+                            logger.warning(f"Error processing sleep data: {e}")
+                    
+                    # Check for exercise/workout data
+                    if is_exercise or 'workoutActivityType' in item:
+                        try:
+                            exercise_start = mysql_timestamp
+                            exercise_end = item.get('endDate', mysql_timestamp)
+                            if isinstance(exercise_end, str):
+                                exercise_end = datetime.fromisoformat(exercise_end.replace('Z', '').replace('+00:00', '')).strftime('%Y-%m-%d %H:%M:%S')
+                            
+                            duration_mins = item.get('duration', 0)
+                            if isinstance(duration_mins, str):
+                                try:
+                                    duration_mins = float(duration_mins)
+                                except:
+                                    duration_mins = 0
+                            
+                            cursor.execute('''
+                                INSERT IGNORE INTO exercise 
+                                (patient_id, workout_type, start_time, end_time, duration_minutes,
+                                 total_distance, distance_unit, total_energy, energy_unit, date,
+                                 source_name, automation_type, session_id, raw_data)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (patient_id, item.get('workoutActivityType', metric_name),
+                                  exercise_start, exercise_end, duration_mins,
+                                  item.get('totalDistance', 0), item.get('distanceUnit', ''),
+                                  item.get('totalEnergyBurned', 0), item.get('energyUnit', ''),
+                                  date_str, source_name, automation_type, session_id, json.dumps(item)))
+                            processed_other += 1
+                            continue
+                        except Exception as e:
+                            logger.warning(f"Error processing exercise data: {e}")
+                    
+                    # Store glucose data
                     if is_glucose or automation_type == "cgm-frequent":
-                        # Store in CGM table for fast access
                         try:
                             cursor.execute('''
-                                INSERT IGNORE INTO cgm_readings 
+                                INSERT IGNORE INTO glucose 
                                 (patient_id, glucose_mg_dl, timestamp, date, hour, minute, 
                                  source_name, automation_type, session_id, raw_data)
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -197,23 +257,7 @@ class HighFrequencyCGMReceiver:
                             processed_glucose += 1
                             
                         except pymysql.Error as e:
-                            logger.warning(f"Database error inserting CGM reading: {e}")
-                            continue
-                    else:
-                        # Store other metrics in general table
-                        try:
-                            cursor.execute('''
-                                INSERT IGNORE INTO health_metrics 
-                                (patient_id, metric_name, value, unit, timestamp, date, 
-                                 source_name, automation_type, session_id, raw_data)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ''', (patient_id, metric_name, value, unit, mysql_timestamp, date_str,
-                                  source_name, automation_type, session_id, json.dumps(item)))
-                            
-                            processed_other += 1
-                            
-                        except pymysql.Error as e:
-                            logger.warning(f"Database error inserting health metric: {e}")
+                            logger.warning(f"Database error inserting glucose reading: {e}")
                             continue
                         
                 except Exception as e:
@@ -224,8 +268,10 @@ class HighFrequencyCGMReceiver:
             
             result = {
                 "status": "success",
-                "processed_glucose_readings": processed_glucose,
-                "processed_other_metrics": processed_other,
+                "processed_glucose": processed_glucose,
+                "processed_sleep": 0,  # Will be updated if sleep data detected
+                "processed_exercise": 0,  # Will be updated if exercise data detected
+                "processed_other": processed_other,
                 "patient_id": patient_id,
                 "session_id": session_id,
                 "automation_type": automation_type,
@@ -233,9 +279,9 @@ class HighFrequencyCGMReceiver:
             }
             
             if processed_glucose > 0:
-                logger.info(f"✅ Stored {processed_glucose} CGM readings")
+                logger.info(f"✅ Stored {processed_glucose} glucose readings")
             if processed_other > 0:
-                logger.info(f"✅ Stored {processed_other} other health metrics")
+                logger.info(f"✅ Stored {processed_other} sleep/exercise records")
             
             return result
             
@@ -249,7 +295,7 @@ class HighFrequencyCGMReceiver:
                 conn.close()
     
     def get_recent_cgm_readings(self, patient_id: str = "cgm_patient", minutes_back: int = 60) -> List[Dict]:
-        """Get recent CGM readings (optimized for 5-minute frequency)"""
+        """Get recent glucose readings (optimized for 5-minute frequency)"""
         conn = None
         try:
             conn = self.db_config.get_connection()
@@ -260,7 +306,7 @@ class HighFrequencyCGMReceiver:
             
             cursor.execute('''
                 SELECT timestamp, glucose_mg_dl, source_name, automation_type
-                FROM cgm_readings 
+                FROM glucose 
                 WHERE patient_id = %s 
                   AND timestamp >= %s
                 ORDER BY timestamp DESC
@@ -309,7 +355,7 @@ class HighFrequencyCGMReceiver:
                 SELECT COUNT(*) as count, AVG(glucose_mg_dl) as avg_glucose, 
                        MIN(glucose_mg_dl) as min_glucose, MAX(glucose_mg_dl) as max_glucose,
                        MIN(timestamp) as first_reading, MAX(timestamp) as last_reading
-                FROM cgm_readings 
+                FROM glucose 
                 WHERE patient_id = %s 
                   AND timestamp >= %s
             ''', (patient_id, start_time))
@@ -351,6 +397,133 @@ class HighFrequencyCGMReceiver:
                 "total_readings": 0,
                 "message": f"Error retrieving stats: {str(e)}"
             }
+        finally:
+            if conn:
+                conn.close()
+    
+    def get_glucose_data(self, patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
+        """Get glucose data from RDS"""
+        conn = None
+        try:
+            conn = self.db_config.get_connection()
+            cursor = conn.cursor()
+            
+            query = "SELECT * FROM glucose WHERE patient_id = %s"
+            params = [patient_id]
+            
+            if start_date and end_date:
+                query += " AND date >= %s AND date <= %s"
+                params.extend([start_date, end_date])
+            
+            query += " ORDER BY timestamp DESC LIMIT %s"
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            
+            return [
+                {
+                    "id": row['id'],
+                    "patient_id": row['patient_id'],
+                    "glucose_mg_dl": float(row['glucose_mg_dl']) if row['glucose_mg_dl'] else None,
+                    "timestamp": row['timestamp'].isoformat() if isinstance(row['timestamp'], datetime) else str(row['timestamp']),
+                    "date": str(row['date']),
+                    "hour": row['hour'],
+                    "minute": row['minute'],
+                    "source_name": row['source_name'],
+                    "created_at": row['created_at'].isoformat() if isinstance(row['created_at'], datetime) else str(row['created_at'])
+                }
+                for row in results
+            ]
+        except Exception as e:
+            logger.error(f"Error getting glucose data: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+    
+    def get_sleep_data(self, patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
+        """Get sleep data from RDS"""
+        conn = None
+        try:
+            conn = self.db_config.get_connection()
+            cursor = conn.cursor()
+            
+            query = "SELECT * FROM sleep WHERE patient_id = %s"
+            params = [patient_id]
+            
+            if start_date and end_date:
+                query += " AND date >= %s AND date <= %s"
+                params.extend([start_date, end_date])
+            
+            query += " ORDER BY start_time DESC LIMIT %s"
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            
+            return [
+                {
+                    "id": row['id'],
+                    "patient_id": row['patient_id'],
+                    "start_time": row['start_time'].isoformat() if isinstance(row['start_time'], datetime) else str(row['start_time']),
+                    "end_time": row['end_time'].isoformat() if isinstance(row['end_time'], datetime) else str(row['end_time']),
+                    "duration_hours": float(row['duration_hours']) if row['duration_hours'] else None,
+                    "sleep_stage": row['sleep_stage'],
+                    "date": str(row['date']),
+                    "source_name": row['source_name'],
+                    "created_at": row['created_at'].isoformat() if isinstance(row['created_at'], datetime) else str(row['created_at'])
+                }
+                for row in results
+            ]
+        except Exception as e:
+            logger.error(f"Error getting sleep data: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+    
+    def get_exercise_data(self, patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
+        """Get exercise data from RDS"""
+        conn = None
+        try:
+            conn = self.db_config.get_connection()
+            cursor = conn.cursor()
+            
+            query = "SELECT * FROM exercise WHERE patient_id = %s"
+            params = [patient_id]
+            
+            if start_date and end_date:
+                query += " AND date >= %s AND date <= %s"
+                params.extend([start_date, end_date])
+            
+            query += " ORDER BY start_time DESC LIMIT %s"
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            
+            return [
+                {
+                    "id": row['id'],
+                    "patient_id": row['patient_id'],
+                    "workout_type": row['workout_type'],
+                    "start_time": row['start_time'].isoformat() if isinstance(row['start_time'], datetime) else str(row['start_time']),
+                    "end_time": row['end_time'].isoformat() if isinstance(row['end_time'], datetime) else str(row['end_time']) if row['end_time'] else None,
+                    "duration_minutes": float(row['duration_minutes']) if row['duration_minutes'] else None,
+                    "total_distance": float(row['total_distance']) if row['total_distance'] else None,
+                    "distance_unit": row['distance_unit'],
+                    "total_energy": float(row['total_energy']) if row['total_energy'] else None,
+                    "energy_unit": row['energy_unit'],
+                    "date": str(row['date']),
+                    "source_name": row['source_name'],
+                    "created_at": row['created_at'].isoformat() if isinstance(row['created_at'], datetime) else str(row['created_at'])
+                }
+                for row in results
+            ]
+        except Exception as e:
+            logger.error(f"Error getting exercise data: {e}")
+            return []
         finally:
             if conn:
                 conn.close()
@@ -594,6 +767,78 @@ def start_cgm_server(port: int = 5000) -> dict:
     except Exception as e:
         logger.error(f"Error starting CGM server: {e}")
         return {"error": str(e)}
+
+@mcp.tool()
+def get_glucose_data(patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
+    """
+    Get glucose data from RDS MySQL database.
+    
+    Args:
+        patient_id (str): Patient identifier (default: "cgm_patient")
+        start_date (str): Start date in YYYY-MM-DD format (optional)
+        end_date (str): End date in YYYY-MM-DD format (optional)
+        limit (int): Maximum number of records to return (default: 1000)
+    """
+    try:
+        data = cgm_receiver.get_glucose_data(patient_id, start_date, end_date, limit)
+        return {
+            "table": "glucose",
+            "patient_id": patient_id,
+            "total_records": len(data),
+            "date_range": f"{start_date} to {end_date}" if start_date and end_date else "all dates",
+            "data": data
+        }
+    except Exception as e:
+        logger.error(f"Error getting glucose data: {e}")
+        return {"error": str(e), "table": "glucose"}
+
+@mcp.tool()
+def get_sleep_data(patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
+    """
+    Get sleep data from RDS MySQL database.
+    
+    Args:
+        patient_id (str): Patient identifier (default: "cgm_patient")
+        start_date (str): Start date in YYYY-MM-DD format (optional)
+        end_date (str): End date in YYYY-MM-DD format (optional)
+        limit (int): Maximum number of records to return (default: 1000)
+    """
+    try:
+        data = cgm_receiver.get_sleep_data(patient_id, start_date, end_date, limit)
+        return {
+            "table": "sleep",
+            "patient_id": patient_id,
+            "total_records": len(data),
+            "date_range": f"{start_date} to {end_date}" if start_date and end_date else "all dates",
+            "data": data
+        }
+    except Exception as e:
+        logger.error(f"Error getting sleep data: {e}")
+        return {"error": str(e), "table": "sleep"}
+
+@mcp.tool()
+def get_exercise_data(patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
+    """
+    Get exercise/workout data from RDS MySQL database.
+    
+    Args:
+        patient_id (str): Patient identifier (default: "cgm_patient")
+        start_date (str): Start date in YYYY-MM-DD format (optional)
+        end_date (str): End date in YYYY-MM-DD format (optional)
+        limit (int): Maximum number of records to return (default: 1000)
+    """
+    try:
+        data = cgm_receiver.get_exercise_data(patient_id, start_date, end_date, limit)
+        return {
+            "table": "exercise",
+            "patient_id": patient_id,
+            "total_records": len(data),
+            "date_range": f"{start_date} to {end_date}" if start_date and end_date else "all dates",
+            "data": data
+        }
+    except Exception as e:
+        logger.error(f"Error getting exercise data: {e}")
+        return {"error": str(e), "table": "exercise"}
 
 if __name__ == "__main__":
     # When running as MCP server, all output must go to stderr, not stdout

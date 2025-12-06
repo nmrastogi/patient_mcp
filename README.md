@@ -55,9 +55,9 @@ MCP server for diabetes patient data analysis with Amazon RDS MySQL backend.
 ### Database Schema
 
 The following tables are created automatically:
-- `cgm_readings`: High-frequency CGM data (5-minute intervals)
-- `health_metrics`: Other health metrics (hourly)
-- `workouts`: Exercise/workout data
+- **`glucose`**: Glucose/CGM readings with timestamps, values, and metadata
+- **`sleep`**: Sleep data with start/end times, duration, and sleep stages
+- **`exercise`**: Exercise/workout data with type, duration, distance, and energy burned
 
 ## Running the Server
 
@@ -73,6 +73,13 @@ Or use the startup script:
 ## MCP Tools
 
 The server exposes the following MCP tools:
+
+### Data Retrieval from RDS:
+- `get_glucose_data`: Retrieve glucose data from RDS MySQL (with optional date filtering)
+- `get_sleep_data`: Retrieve sleep data from RDS MySQL (with optional date filtering)
+- `get_exercise_data`: Retrieve exercise/workout data from RDS MySQL (with optional date filtering)
+
+### Analysis Tools:
 - `get_patient_summary`: Retrieve patient glucose readings
 - `detect_anomalous_glucose_events`: Find statistical anomalies
 - `find_last_hypoglycemic_event`: Track hypo events
