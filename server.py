@@ -34,13 +34,17 @@ class HighFrequencyCGMReceiver:
         self.init_database()
     
     def init_database(self):
-        """Initialize MySQL database with glucose, sleep, and exercise tables using SQLAlchemy"""
+        """Verify database tables exist (tables are already created in RDS)"""
         try:
-            # Create all tables using SQLAlchemy
-            Base.metadata.create_all(bind=self.db_config.engine)
-            logger.info(f"✅ Database tables initialized using SQLAlchemy: glucose, sleep, exercise on {self.db_config.host}")
+            # Tables already exist in RDS, just verify connection
+            # SQLAlchemy will use existing tables
+            from sqlalchemy import inspect
+            inspector = inspect(self.db_config.engine)
+            existing_tables = inspector.get_table_names()
+            logger.info(f"✅ Connected to RDS. Existing tables: {', '.join(existing_tables)}")
+            logger.info(f"✅ Using tables: blood_glucose, sleep_data, exercise_data on {self.db_config.host}")
         except Exception as e:
-            logger.error(f"❌ Error initializing database: {e}")
+            logger.error(f"❌ Error verifying database: {e}")
             raise
     
     def process_cgm_data(self, data: Dict, patient_id: str = None, session_id: str = None, automation_type: str = None) -> Dict:
@@ -117,30 +121,24 @@ class HighFrequencyCGMReceiver:
                         try:
                             sleep_start = datetime.fromisoformat(item['startDate'].replace('Z', '').replace('+00:00', ''))
                             sleep_end = datetime.fromisoformat(item['endDate'].replace('Z', '').replace('+00:00', ''))
-                            duration_hours = (sleep_end - sleep_start).total_seconds() / 3600
+                            duration_minutes = int((sleep_end - sleep_start).total_seconds() / 60)
                             
-                            # Check if record already exists
-                            existing = session.query(Sleep).filter(
-                                Sleep.patient_id == patient_id,
-                                Sleep.start_time == sleep_start
-                            ).first()
-                            
-                            if not existing:
-                                sleep_record = Sleep(
-                                    patient_id=patient_id,
-                                    start_time=sleep_start,
-                                    end_time=sleep_end,
-                                    duration_hours=duration_hours,
-                                    sleep_stage=item.get('value', 'unknown'),
-                                    date=sleep_start.date(),
-                                    source_name=source_name,
-                                    automation_type=automation_type,
-                                    session_id=session_id,
-                                    raw_data=json.dumps(item)
-                                )
-                                session.add(sleep_record)
-                                processed_sleep += 1
-                            continue
+                            # Insert sleep data into sleep_data table
+                            sleep_record = Sleep(
+                                date=sleep_start.date(),
+                                bedtime=sleep_start,
+                                wake_time=sleep_end,
+                                sleep_duration_minutes=duration_minutes,
+                                deep_sleep_minutes=item.get('deepSleepMinutes', None),
+                                light_sleep_minutes=item.get('lightSleepMinutes', None),
+                                rem_sleep_minutes=item.get('remSleepMinutes', None),
+                                sleep_efficiency=item.get('sleepEfficiency', None),
+                                heart_rate_avg=item.get('heartRateAvg', None),
+                                heart_rate_min=item.get('heartRateMin', None),
+                                heart_rate_max=item.get('heartRateMax', None)
+                            )
+                            session.merge(sleep_record)
+                            processed_sleep += 1
                         except IntegrityError:
                             # Duplicate entry, skip
                             session.rollback()
@@ -169,33 +167,19 @@ class HighFrequencyCGMReceiver:
                                 except:
                                     duration_mins = (exercise_end - exercise_start).total_seconds() / 60
                             
-                            # Check if record already exists
-                            existing = session.query(Exercise).filter(
-                                Exercise.patient_id == patient_id,
-                                Exercise.workout_type == item.get('workoutActivityType', metric_name),
-                                Exercise.start_time == exercise_start
-                            ).first()
-                            
-                            if not existing:
-                                exercise_record = Exercise(
-                                    patient_id=patient_id,
-                                    workout_type=item.get('workoutActivityType', metric_name),
-                                    start_time=exercise_start,
-                                    end_time=exercise_end,
-                                    duration_minutes=duration_mins,
-                                    total_distance=item.get('totalDistance', 0),
-                                    distance_unit=item.get('distanceUnit', ''),
-                                    total_energy=item.get('totalEnergyBurned', 0),
-                                    energy_unit=item.get('energyUnit', ''),
-                                    date=exercise_start.date(),
-                                    source_name=source_name,
-                                    automation_type=automation_type,
-                                    session_id=session_id,
-                                    raw_data=json.dumps(item)
-                                )
-                                session.add(exercise_record)
-                                processed_exercise += 1
-                            continue
+                            # Insert exercise data into exercise_data table
+                            exercise_record = Exercise(
+                                timestamp=exercise_start,
+                                activity_type=item.get('workoutActivityType', metric_name),
+                                duration_minutes=int(duration_mins) if duration_mins else None,
+                                calories_burned=item.get('totalEnergyBurned', 0),
+                                distance_km=item.get('totalDistance', 0),
+                                steps=item.get('steps', None),
+                                active_energy_kcal=item.get('totalEnergyBurned', 0),
+                                resting_energy_kcal=None
+                            )
+                            session.merge(exercise_record)
+                            processed_exercise += 1
                         except IntegrityError:
                             # Duplicate entry, skip
                             session.rollback()
@@ -207,28 +191,15 @@ class HighFrequencyCGMReceiver:
                     # Store glucose data
                     if is_glucose or automation_type == "cgm-frequent":
                         try:
-                            # Check if record already exists
-                            existing = session.query(Glucose).filter(
-                                Glucose.patient_id == patient_id,
-                                Glucose.timestamp == dt
-                            ).first()
-                            
-                            if not existing:
-                                glucose_record = Glucose(
-                                    patient_id=patient_id,
-                                    glucose_mg_dl=value,
-                                    timestamp=dt,
-                                    date=dt.date(),
-                                    hour=hour,
-                                    minute=minute,
-                                    source_name=source_name,
-                                    automation_type=automation_type,
-                                    session_id=session_id,
-                                    raw_data=json.dumps(item)
-                                )
-                                session.add(glucose_record)
-                                processed_glucose += 1
-                            
+                            # Insert glucose data into blood_glucose table
+                            glucose_record = Glucose(
+                                timestamp=dt,
+                                value=value,
+                                unit='mg/dL',
+                                source=source_name or 'cgm'
+                            )
+                            session.merge(glucose_record)
+                            processed_glucose += 1
                         except IntegrityError:
                             # Duplicate entry, skip
                             session.rollback()
@@ -275,8 +246,8 @@ class HighFrequencyCGMReceiver:
             if session:
                 session.close()
     
-    def get_recent_cgm_readings(self, patient_id: str = "cgm_patient", minutes_back: int = 60) -> List[Dict]:
-        """Get recent glucose readings using SQLAlchemy"""
+    def get_recent_cgm_readings(self, patient_id: str = None, minutes_back: int = 60) -> List[Dict]:
+        """Get recent glucose readings using SQLAlchemy (blood_glucose table)"""
         session = None
         try:
             session = self.db_config.get_session()
@@ -285,7 +256,6 @@ class HighFrequencyCGMReceiver:
             start_time = end_time - timedelta(minutes=minutes_back)
             
             results = session.query(Glucose).filter(
-                Glucose.patient_id == patient_id,
                 Glucose.timestamp >= start_time
             ).order_by(Glucose.timestamp.desc()).limit(100).all()
             
@@ -294,9 +264,9 @@ class HighFrequencyCGMReceiver:
                 timestamp_dt = record.timestamp
                 readings.append({
                     "timestamp": timestamp_dt.isoformat() if timestamp_dt else None,
-                    "glucose_mg_dl": float(record.glucose_mg_dl) if record.glucose_mg_dl is not None else None,
-                    "source": record.source_name,
-                    "automation_type": record.automation_type,
+                    "glucose_mg_dl": float(record.value) if record.value is not None else None,
+                    "source": record.source,
+                    "unit": record.unit,
                     "minutes_ago": round((end_time - timestamp_dt).total_seconds() / 60, 1) if timestamp_dt else None
                 })
             
@@ -308,7 +278,7 @@ class HighFrequencyCGMReceiver:
             if session:
                 session.close()
     
-    def get_cgm_stats(self, patient_id: str = "cgm_patient", hours_back: int = 24) -> Dict:
+    def get_cgm_stats(self, patient_id: str = None, hours_back: int = 24) -> Dict:
         """Get CGM statistics for the specified time period using SQLAlchemy"""
         session = None
         try:
@@ -321,13 +291,12 @@ class HighFrequencyCGMReceiver:
             
             result = session.query(
                 func.count(Glucose.id).label('count'),
-                func.avg(Glucose.glucose_mg_dl).label('avg_glucose'),
-                func.min(Glucose.glucose_mg_dl).label('min_glucose'),
-                func.max(Glucose.glucose_mg_dl).label('max_glucose'),
+                func.avg(Glucose.value).label('avg_glucose'),
+                func.min(Glucose.value).label('min_glucose'),
+                func.max(Glucose.value).label('max_glucose'),
                 func.min(Glucose.timestamp).label('first_reading'),
                 func.max(Glucose.timestamp).label('last_reading')
             ).filter(
-                Glucose.patient_id == patient_id,
                 Glucose.timestamp >= start_time
             ).first()
             
@@ -370,7 +339,7 @@ class HighFrequencyCGMReceiver:
             if session:
                 session.close()
     
-    def get_glucose_data(self, patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
+    def get_glucose_data(self, patient_id: str = None, start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
         """Get glucose data from RDS using SQLAlchemy"""
         session = None
         try:
@@ -394,20 +363,20 @@ class HighFrequencyCGMReceiver:
             if session:
                 session.close()
     
-    def get_sleep_data(self, patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
-        """Get sleep data from RDS using SQLAlchemy"""
+    def get_sleep_data(self, patient_id: str = None, start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
+        """Get sleep data from RDS using SQLAlchemy (sleep_data table)"""
         session = None
         try:
             session = self.db_config.get_session()
             
-            query = session.query(Sleep).filter(Sleep.patient_id == patient_id)
+            query = session.query(Sleep)  # No patient_id filter - table doesn't have it
             
             if start_date and end_date:
                 start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
                 end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
                 query = query.filter(Sleep.date >= start_dt, Sleep.date <= end_dt)
             
-            results = query.order_by(Sleep.start_time.desc()).limit(limit).all()
+            results = query.order_by(Sleep.bedtime.desc()).limit(limit).all()
             
             return [record.to_dict() for record in results]
         except Exception as e:
@@ -417,20 +386,20 @@ class HighFrequencyCGMReceiver:
             if session:
                 session.close()
     
-    def get_exercise_data(self, patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
-        """Get exercise data from RDS using SQLAlchemy"""
+    def get_exercise_data(self, patient_id: str = None, start_date: str = None, end_date: str = None, limit: int = 1000) -> List[Dict]:
+        """Get exercise data from RDS using SQLAlchemy (exercise_data table)"""
         session = None
         try:
             session = self.db_config.get_session()
             
-            query = session.query(Exercise).filter(Exercise.patient_id == patient_id)
+            query = session.query(Exercise)  # No patient_id filter - table doesn't have it
             
             if start_date and end_date:
-                start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
-                query = query.filter(Exercise.date >= start_dt, Exercise.date <= end_dt)
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)  # Include end date
+                query = query.filter(Exercise.timestamp >= start_dt, Exercise.timestamp < end_dt)
             
-            results = query.order_by(Exercise.start_time.desc()).limit(limit).all()
+            results = query.order_by(Exercise.timestamp.desc()).limit(limit).all()
             
             return [record.to_dict() for record in results]
         except Exception as e:
@@ -681,7 +650,7 @@ def start_cgm_server(port: int = 5000) -> dict:
         return {"error": str(e)}
 
 @mcp.tool()
-def get_glucose_data(patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
+def get_glucose_data(patient_id: str = None, start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
     """
     Get glucose data from RDS MySQL database.
     
@@ -705,7 +674,7 @@ def get_glucose_data(patient_id: str = "cgm_patient", start_date: str = None, en
         return {"error": str(e), "table": "glucose"}
 
 @mcp.tool()
-def get_sleep_data(patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
+def get_sleep_data(patient_id: str = None, start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
     """
     Get sleep data from RDS MySQL database.
     
@@ -729,7 +698,7 @@ def get_sleep_data(patient_id: str = "cgm_patient", start_date: str = None, end_
         return {"error": str(e), "table": "sleep"}
 
 @mcp.tool()
-def get_exercise_data(patient_id: str = "cgm_patient", start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
+def get_exercise_data(patient_id: str = None, start_date: str = None, end_date: str = None, limit: int = 1000) -> dict:
     """
     Get exercise/workout data from RDS MySQL database.
     
