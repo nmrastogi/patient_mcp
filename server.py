@@ -251,10 +251,10 @@ class HighFrequencyCGMReceiver:
         session = None
         try:
             session = self.db_config.get_session()
-        
+            
             end_time = datetime.now()
             start_time = end_time - timedelta(minutes=minutes_back)
-        
+            
             results = session.query(Glucose).filter(
                 Glucose.timestamp >= start_time
             ).order_by(Glucose.timestamp.desc()).limit(100).all()
@@ -517,23 +517,30 @@ def run_flask_server(port: int = 5000):
         # Completely suppress Flask's stdout output to avoid breaking MCP protocol
         import sys
         import logging
-        import werkzeug.serving
         import os
+        from io import StringIO
         
-        # Suppress werkzeug (Flask's WSGI server) output completely
+        # Suppress ALL logging output from werkzeug and Flask
         werkzeug_logger = logging.getLogger('werkzeug')
+        werkzeug_logger.setLevel(logging.CRITICAL)
         werkzeug_logger.disabled = True
         
-        # Suppress Flask CLI output
         cli_logger = logging.getLogger('flask.cli')
+        cli_logger.setLevel(logging.CRITICAL)
         cli_logger.disabled = True
         
-        # Redirect stdout to stderr for Flask's output
+        # Suppress all other Flask-related loggers
+        for logger_name in ['flask', 'werkzeug', 'flask.cli']:
+            log = logging.getLogger(logger_name)
+            log.setLevel(logging.CRITICAL)
+            log.disabled = True
+        
+        # Redirect stdout to a null device to completely silence Flask
         original_stdout = sys.stdout
-        sys.stdout = sys.stderr
+        sys.stdout = StringIO()  # Redirect to a string buffer instead of stderr
         
         try:
-            # Run Flask - all output goes to stderr now
+            # Run Flask with all output suppressed
             app.run(
                 host='0.0.0.0', 
                 port=port, 
@@ -766,48 +773,18 @@ def get_exercise_data(patient_id: str = None, start_date: str = None, end_date: 
 if __name__ == "__main__":
     # When running as MCP server, all output must go to stderr, not stdout
     # MCP communicates via JSON on stdout, so any print() will break it
-    logger.info("🩸 Starting 5-Minute CGM Monitoring System...")
-    logger.info("=" * 50)
     
-    # Try to start Flask server on port 5000, fallback to 5001 if busy
-    # Note: Flask server is optional - MCP tools work without it
-    try:
-        import socket
-        flask_port = 5000
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        result = sock.connect_ex(('127.0.0.1', 5000))
-        sock.close()
-        if result == 0:
-            logger.warning(f"⚠️  Port 5000 is in use, trying port 5001...")
-            flask_port = 5001
-        
-        # Start Flask server in background (non-blocking)
-        flask_thread = threading.Thread(target=run_flask_server, args=(flask_port,), daemon=True)
-        flask_thread.start()
-        
-        # Give Flask a moment to start
-        import time
-        time.sleep(0.5)
-        
-        # Get and display server information
-        server_ip = get_server_url()
-        
-        logger.info(f"✅ CGM Server Started Successfully!")
-        logger.info(f"📡 Data Endpoint: http://{server_ip}:{flask_port}/health-data")
-        logger.info(f"📊 Status Page: http://{server_ip}:{flask_port}/cgm-status") 
-        logger.info(f"🔗 Local Status: http://localhost:{flask_port}/cgm-status")
-        logger.info("=" * 50)
-        logger.info("📱 Health Auto Export Configuration:")
-        logger.info(f"   URL: http://{server_ip}:{flask_port}/health-data")
-        logger.info(f"   Frequency: Quantity=5, Interval=minutes")
-        logger.info(f"   Data: Blood Glucose only")
-        logger.info(f"   Format: JSON")
-        logger.info("=" * 50)
-    except Exception as e:
-        logger.warning(f"⚠️  Could not start Flask server: {e}")
-        logger.info("ℹ️  MCP tools will still work without Flask server")
+    # IMPORTANT: Never start Flask when running as MCP server
+    # Flask's app.run() outputs "* Serving Flask app..." and "* Debug mode: off" 
+    # directly to stdout, which breaks the MCP JSON-RPC protocol
     
-    logger.info("🚀 Starting MCP server...")
+    # Flask is only needed for receiving real-time data via HTTP POST
+    # MCP tools work perfectly without Flask (they query the database directly)
     
-    # Start MCP server
+    # If you need Flask for data ingestion, run it separately:
+    #   python -c "from server import app; app.run(port=5000)"
+    
+    # Start MCP server (this blocks and handles stdio communication)
+    # - All logging goes to stderr (via logger)
+    # - Only JSON-RPC responses go to stdout (via mcp.run)
     mcp.run(transport='stdio')
