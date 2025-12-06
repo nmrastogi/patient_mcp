@@ -408,8 +408,15 @@ class HighFrequencyCGMReceiver:
             if session:
                 session.close()
 
-# Initialize CGM receiver
-cgm_receiver = HighFrequencyCGMReceiver()
+# Initialize CGM receiver (lazy initialization to avoid blocking MCP startup)
+_cgm_receiver = None
+
+def get_cgm_receiver():
+    """Get or create CGM receiver instance (lazy initialization)"""
+    global _cgm_receiver
+    if _cgm_receiver is None:
+        _cgm_receiver = HighFrequencyCGMReceiver()
+    return _cgm_receiver
 
 # Flask server for receiving data
 app = Flask(__name__)
@@ -433,7 +440,7 @@ def receive_health_data():
         logger.info(f"[{current_time}] 📡 Received data - Type: {automation_type}, Session: {session_id[:8]}...")
         
         # Process the data
-        result = cgm_receiver.process_cgm_data(
+        result = get_cgm_receiver().process_cgm_data(
             data=data,
             patient_id="cgm_patient",
             session_id=session_id,
@@ -454,9 +461,9 @@ def receive_health_data():
 def cgm_status():
     """Get current CGM monitoring status"""
     try:
-        stats_1h = cgm_receiver.get_cgm_stats(hours_back=1)
-        stats_24h = cgm_receiver.get_cgm_stats(hours_back=24)
-        recent_readings = cgm_receiver.get_recent_cgm_readings(minutes_back=30)
+        stats_1h = get_cgm_receiver().get_cgm_stats(hours_back=1)
+        stats_24h = get_cgm_receiver().get_cgm_stats(hours_back=24)
+        recent_readings = get_cgm_receiver().get_recent_cgm_readings(minutes_back=30)
         
         return jsonify({
             "status": "healthy",
@@ -504,8 +511,21 @@ def get_server_url():
 
 def run_flask_server(port: int = 5000):
     """Run Flask server for CGM data reception"""
-    logger.info(f"🏥 Starting 5-Minute CGM Flask server on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    try:
+        logger.info(f"🏥 Starting 5-Minute CGM Flask server on port {port}")
+        # Redirect Flask's stdout to stderr to avoid breaking MCP protocol
+        import sys
+        import werkzeug.serving
+        # Suppress Flask's default stdout output
+        import logging
+        werkzeug_logger = logging.getLogger('werkzeug')
+        werkzeug_logger.setLevel(logging.ERROR)  # Only show errors, not info
+        
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
+    except Exception as e:
+        logger.error(f"❌ Flask server error: {e}")
+        # Don't raise - allow MCP server to continue even if Flask fails
+        pass
 
 # Initialize MCP server
 mcp = FastMCP(name="HighFrequencyCGMMonitoring")
@@ -520,7 +540,7 @@ def get_live_cgm_data(minutes_back: int = 30) -> dict:
         minutes_back (int): Number of minutes of CGM data to retrieve (default: 30)
     """
     try:
-        readings = cgm_receiver.get_recent_cgm_readings(minutes_back=minutes_back)
+        readings = get_cgm_receiver().get_recent_cgm_readings(minutes_back=minutes_back)
         
         if not readings:
             return {
@@ -566,9 +586,9 @@ def get_cgm_monitoring_status() -> dict:
     """
     try:
         # Get system stats
-        stats_1h = cgm_receiver.get_cgm_stats(hours_back=1)
-        stats_24h = cgm_receiver.get_cgm_stats(hours_back=24)
-        recent_readings = cgm_receiver.get_recent_cgm_readings(minutes_back=15)
+        stats_1h = get_cgm_receiver().get_cgm_stats(hours_back=1)
+        stats_24h = get_cgm_receiver().get_cgm_stats(hours_back=24)
+        recent_readings = get_cgm_receiver().get_recent_cgm_readings(minutes_back=15)
         
         # Get server URL
         server_ip = get_server_url()
@@ -660,7 +680,7 @@ def get_glucose_data(patient_id: str = None, start_date: str = None, end_date: s
         limit (int): Maximum number of records to return (default: 1000)
     """
     try:
-        data = cgm_receiver.get_glucose_data(patient_id, start_date, end_date, limit)
+        data = get_cgm_receiver().get_glucose_data(patient_id, start_date, end_date, limit)
         return {
             "table": "glucose",
             "patient_id": patient_id,
@@ -684,7 +704,7 @@ def get_sleep_data(patient_id: str = None, start_date: str = None, end_date: str
         limit (int): Maximum number of records to return (default: 1000)
     """
     try:
-        data = cgm_receiver.get_sleep_data(patient_id, start_date, end_date, limit)
+        data = get_cgm_receiver().get_sleep_data(patient_id, start_date, end_date, limit)
         return {
             "table": "sleep",
             "patient_id": patient_id,
@@ -708,7 +728,7 @@ def get_exercise_data(patient_id: str = None, start_date: str = None, end_date: 
         limit (int): Maximum number of records to return (default: 1000)
     """
     try:
-        data = cgm_receiver.get_exercise_data(patient_id, start_date, end_date, limit)
+        data = get_cgm_receiver().get_exercise_data(patient_id, start_date, end_date, limit)
         return {
             "table": "exercise",
             "patient_id": patient_id,
@@ -727,33 +747,43 @@ if __name__ == "__main__":
     logger.info("=" * 50)
     
     # Try to start Flask server on port 5000, fallback to 5001 if busy
-    import socket
-    flask_port = 5000
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    result = sock.connect_ex(('127.0.0.1', 5000))
-    sock.close()
-    if result == 0:
-        logger.warning(f"⚠️  Port 5000 is in use, trying port 5001...")
-        flask_port = 5001
+    # Note: Flask server is optional - MCP tools work without it
+    try:
+        import socket
+        flask_port = 5000
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('127.0.0.1', 5000))
+        sock.close()
+        if result == 0:
+            logger.warning(f"⚠️  Port 5000 is in use, trying port 5001...")
+            flask_port = 5001
+        
+        # Start Flask server in background (non-blocking)
+        flask_thread = threading.Thread(target=run_flask_server, args=(flask_port,), daemon=True)
+        flask_thread.start()
+        
+        # Give Flask a moment to start
+        import time
+        time.sleep(0.5)
+        
+        # Get and display server information
+        server_ip = get_server_url()
+        
+        logger.info(f"✅ CGM Server Started Successfully!")
+        logger.info(f"📡 Data Endpoint: http://{server_ip}:{flask_port}/health-data")
+        logger.info(f"📊 Status Page: http://{server_ip}:{flask_port}/cgm-status") 
+        logger.info(f"🔗 Local Status: http://localhost:{flask_port}/cgm-status")
+        logger.info("=" * 50)
+        logger.info("📱 Health Auto Export Configuration:")
+        logger.info(f"   URL: http://{server_ip}:{flask_port}/health-data")
+        logger.info(f"   Frequency: Quantity=5, Interval=minutes")
+        logger.info(f"   Data: Blood Glucose only")
+        logger.info(f"   Format: JSON")
+        logger.info("=" * 50)
+    except Exception as e:
+        logger.warning(f"⚠️  Could not start Flask server: {e}")
+        logger.info("ℹ️  MCP tools will still work without Flask server")
     
-    # Start Flask server
-    flask_thread = threading.Thread(target=run_flask_server, args=(flask_port,), daemon=True)
-    flask_thread.start()
-    
-    # Get and display server information
-    server_ip = get_server_url()
-    
-    logger.info(f"✅ CGM Server Started Successfully!")
-    logger.info(f"📡 Data Endpoint: http://{server_ip}:{flask_port}/health-data")
-    logger.info(f"📊 Status Page: http://{server_ip}:{flask_port}/cgm-status") 
-    logger.info(f"🔗 Local Status: http://localhost:{flask_port}/cgm-status")
-    logger.info("=" * 50)
-    logger.info("📱 Health Auto Export Configuration:")
-    logger.info(f"   URL: http://{server_ip}:{flask_port}/health-data")
-    logger.info(f"   Frequency: Quantity=5, Interval=minutes")
-    logger.info(f"   Data: Blood Glucose only")
-    logger.info(f"   Format: JSON")
-    logger.info("=" * 50)
     logger.info("🚀 Starting MCP server...")
     
     # Start MCP server
