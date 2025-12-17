@@ -157,3 +157,4 @@ class TestDataConsistency:
             for key in required_keys:
                 assert key in result, f"{result.get('table')} missing key: {key}"
 
+
