@@ -46,6 +46,20 @@ class TestGlucoseDataTool:
         
         assert 'error' in result
         assert 'Invalid date format' in result['error']
+    
+    def test_get_glucose_data_unlimited(self):
+        """Test glucose data retrieval with no limit (all records)"""
+        result = get_glucose_data(limit=None)
+        
+        assert 'table' in result
+        assert result['table'] == 'blood_glucose'
+        assert 'total_records' in result
+        assert 'limit' in result
+        assert result['limit'] == 'unlimited' or result['limit'] is None
+        assert 'data' in result
+        assert isinstance(result['data'], list)
+        # Should return all available records
+        assert result['total_records'] > 0
 
 
 class TestSleepDataTool:
@@ -156,5 +170,17 @@ class TestDataConsistency:
         for result in [glucose, sleep, exercise]:
             for key in required_keys:
                 assert key in result, f"{result.get('table')} missing key: {key}"
+    
+    def test_unlimited_access_all_tools(self):
+        """Test that all tools support unlimited access (limit=None)"""
+        glucose = get_glucose_data(limit=None)
+        sleep = get_sleep_data(limit=None)
+        exercise = get_exercise_data(limit=None)
+        
+        # All should return unlimited results
+        for result in [glucose, sleep, exercise]:
+            assert 'limit' in result
+            assert result['limit'] == 'unlimited' or result['limit'] is None
+            assert result['total_records'] > 0
 
 

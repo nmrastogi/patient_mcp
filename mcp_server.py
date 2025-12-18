@@ -37,12 +37,10 @@ def _validate_date_params(start_date: Optional[str], end_date: Optional[str]) ->
     return None
 
 
-def _validate_limit(limit: int) -> Optional[Dict]:
+def _validate_limit(limit: Optional[int]) -> Optional[Dict]:
     """Validate limit parameter"""
-    if limit < 1:
-        return {"error": "Limit must be greater than 0"}
-    if limit > 10000:
-        return {"error": "Limit cannot exceed 10000"}
+    if limit is not None and limit < 1:
+        return {"error": "Limit must be greater than 0 or None (for all records)"}
     return None
 
 
@@ -118,7 +116,7 @@ def _get_data_generic(
     order_by_field: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: int = 1000
+    limit: Optional[int] = None
 ) -> Dict:
     """
     Generic function to retrieve data from any table.
@@ -129,7 +127,7 @@ def _get_data_generic(
         order_by_field: Field name to order by (e.g., 'timestamp', 'bedtime')
         start_date: Start date filter (optional)
         end_date: End date filter (optional)
-        limit: Maximum records to return
+        limit: Maximum records to return (None = all records)
     
     Returns:
         Dictionary with table, total_records, date_range, and data
@@ -161,15 +159,20 @@ def _get_data_generic(
         if order_field is None:
             return {"error": f"Model {model_class.__name__} has no field '{order_by_field}'"}
         
-        # Execute query
-        results = query.order_by(order_field.desc()).limit(limit).all()
+        # Execute query with optional limit
+        query = query.order_by(order_field.desc())
+        if limit is not None:
+            results = query.limit(limit).all()
+        else:
+            results = query.all()
+        
         data = [record.to_dict() for record in results]
         
         return {
             "table": table_name,
             "total_records": len(data),
             "date_range": f"{start_date} to {end_date}" if start_date and end_date else "all dates",
-            "limit": limit,
+            "limit": limit if limit is not None else "unlimited",
             "data": data
         }
     except Exception as e:
@@ -184,7 +187,7 @@ def _get_data_generic(
 def get_glucose_data(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: int = 1000
+    limit: Optional[int] = None
 ) -> Dict:
     """
     Get glucose/blood glucose data from RDS MySQL database.
@@ -192,7 +195,7 @@ def get_glucose_data(
     Args:
         start_date: Start date in YYYY-MM-DD format (optional)
         end_date: End date in YYYY-MM-DD format (optional)
-        limit: Maximum number of records to return (default: 1000, max: 10000)
+        limit: Maximum number of records to return (None = all records, default: None)
     
     Returns:
         Dictionary with total_records, date_range, limit, and data array
@@ -211,7 +214,7 @@ def get_glucose_data(
 def get_sleep_data(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: int = 1000
+    limit: Optional[int] = None
 ) -> Dict:
     """
     Get sleep data from RDS MySQL database.
@@ -219,7 +222,7 @@ def get_sleep_data(
     Args:
         start_date: Start date in YYYY-MM-DD format (optional)
         end_date: End date in YYYY-MM-DD format (optional)
-        limit: Maximum number of records to return (default: 1000, max: 10000)
+        limit: Maximum number of records to return (None = all records, default: None)
     
     Returns:
         Dictionary with total_records, date_range, limit, and data array
@@ -238,7 +241,7 @@ def get_sleep_data(
 def get_exercise_data(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: int = 1000
+    limit: Optional[int] = None
 ) -> Dict:
     """
     Get exercise/workout data from RDS MySQL database.
@@ -246,7 +249,7 @@ def get_exercise_data(
     Args:
         start_date: Start date in YYYY-MM-DD format (optional)
         end_date: End date in YYYY-MM-DD format (optional)
-        limit: Maximum number of records to return (default: 1000, max: 10000)
+        limit: Maximum number of records to return (None = all records, default: None)
     
     Returns:
         Dictionary with total_records, date_range, limit, and data array
