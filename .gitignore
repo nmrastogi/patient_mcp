@@ -68,3 +68,5 @@ time_zone.py
 date_range_test.py
 cgm_5min_data.db
 try.ipynb
+tests/
+pytest.ini
