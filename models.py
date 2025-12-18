@@ -81,45 +81,25 @@ class SleepData(Base):
 
 
 class ExerciseData(Base):
-    """Exercise/workout data table - matches RDS schema"""
+    """Exercise/workout data table - matches RDS schema (simplified)"""
     __tablename__ = 'exercise_data'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
-    activity_type = Column(String(100), index=True)
-    duration_minutes = Column(Integer)
-    calories_burned = Column(DECIMAL(8, 2))
-    distance_km = Column(DECIMAL(8, 3))
-    steps = Column(Integer)
-    heart_rate_avg = Column(Integer)
-    heart_rate_max = Column(Integer)
-    active_energy_kcal = Column(DECIMAL(8, 2))
-    resting_energy_kcal = Column(DECIMAL(8, 2))
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    timestamp = Column(DateTime, nullable=False, index=True, unique=True)
+    duration_minutes = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=True)
     
     def to_dict(self):
         """Convert to dictionary"""
         return {
             'id': self.id,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
-            'activity_type': self.activity_type,
             'duration_minutes': self.duration_minutes,
-            'calories_burned': float(self.calories_burned) if self.calories_burned else None,
-            'distance_km': float(self.distance_km) if self.distance_km else None,
-            'steps': self.steps,
-            'heart_rate_avg': self.heart_rate_avg,
-            'heart_rate_max': self.heart_rate_max,
-            'active_energy_kcal': float(self.active_energy_kcal) if self.active_energy_kcal else None,
-            'resting_energy_kcal': float(self.resting_energy_kcal) if self.resting_energy_kcal else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            # Compatibility fields
-            'workout_type': self.activity_type,
+            # Compatibility fields for backward compatibility
             'start_time': self.timestamp.isoformat() if self.timestamp else None,
-            'total_distance': float(self.distance_km) if self.distance_km else None,
-            'distance_unit': 'km',
-            'total_energy': float(self.calories_burned) if self.calories_burned else None,
-            'energy_unit': 'calories',
-            'date': self.timestamp.date() if self.timestamp else None,
+            'date': self.timestamp.date().isoformat() if self.timestamp else None,
+            'duration_hours': float(self.duration_minutes) / 60.0 if self.duration_minutes else None,
         }
 
 # Create aliases for backward compatibility
