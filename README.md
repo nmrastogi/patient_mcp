@@ -1,24 +1,26 @@
-# Patient Summary MCP Server
+# Diabetes Data MCP Server
 
-MCP server for diabetes patient data analysis with Amazon RDS MySQL backend.
+MCP server for diabetes patient data analysis with Amazon RDS MySQL backend. Provides tools for retrieving and analyzing glucose, sleep, and exercise data.
 
 ## Features
-- Patient summary retrieval with date filtering
-- Anomaly detection for glucose readings
-- Hypoglycemic event tracking
-- Glucose pattern analysis (hourly patterns, dawn phenomenon)
-- Real-time CGM data ingestion (5-minute intervals)
-- Time-in-range calculations
+
+- **Data Retrieval**: Query glucose, sleep, and exercise data from RDS MySQL with date filtering
+- **Pattern Detection**: Identify temporal patterns, behavioral patterns, and trends in health data
+- **Correlation Analysis**: Find correlations between exercise, sleep, and glucose metrics
+- **Unlimited Data Access**: No default limits on data retrieval (optional limit parameter)
+- **SQLAlchemy ORM**: Type-safe database queries with automatic schema mapping
 
 ## Architecture
-- **server.py**: Main MCP server with Flask API for real-time data ingestion
-- **patient_data.py**: Data processing and analysis functions
-- **db_config.py**: Amazon RDS MySQL database configuration
-- **manifest.json**: MCP server configuration for Claude Desktop
+
+- **`mcp_server.py`**: Main MCP server with 5 tools for data retrieval and analysis
+- **`models.py`**: SQLAlchemy ORM models for database tables
+- **`db_config.py`**: Amazon RDS MySQL database configuration and connection management
+- **`tests/`**: Pytest test suite for database and MCP tool functionality
 
 ## Database Setup (Amazon RDS MySQL)
 
 ### Prerequisites
+
 1. Amazon RDS MySQL instance running
 2. Database created (default: `diabetes_cgm`)
 3. User credentials with appropriate permissions
@@ -50,45 +52,140 @@ MCP server for diabetes patient data analysis with Amazon RDS MySQL backend.
    export RDS_DATABASE=diabetes_cgm
    ```
 
-3. **Database tables will be created automatically** on first run
+3. **Database tables** should already exist in RDS (not created automatically)
 
 ### Database Schema
 
-The following tables are created automatically:
-- **`glucose`**: Glucose/CGM readings with timestamps, values, and metadata
-- **`sleep`**: Sleep data with start/end times, duration, and sleep stages
-- **`exercise`**: Exercise/workout data with type, duration, distance, and energy burned
+The server connects to the following tables in RDS:
+
+- **`blood_glucose`**: Glucose/CGM readings with timestamps, values (mg/dL), and metadata
+  - Columns: `id`, `timestamp`, `value`, `unit`, `source`, `created_at`
+
+- **`sleep_data`**: Sleep data with bedtime, wake time, duration, and sleep stages
+  - Columns: `id`, `date`, `bedtime`, `wake_time`, `sleep_duration_minutes`, `deep_sleep_minutes`, `light_sleep_minutes`, `rem_sleep_minutes`, `sleep_efficiency`, `heart_rate_avg/min/max`, `created_at`, `updated_at`
+
+- **`exercise_data`**: Exercise/workout data with timestamps and duration
+  - Columns: `id`, `timestamp`, `duration_minutes`, `created_at`
 
 ## Running the Server
 
 ```bash
-python server.py
+python mcp_server.py
 ```
 
-Or use the startup script:
-```bash
-./start_server.sh
-```
+The server runs as an MCP server using stdio transport, suitable for integration with Claude Desktop or other MCP clients.
 
 ## MCP Tools
 
-The server exposes the following MCP tools:
+The server exposes 5 MCP tools:
 
-### Data Retrieval from RDS:
-- `get_glucose_data`: Retrieve glucose data from RDS MySQL (with optional date filtering)
-- `get_sleep_data`: Retrieve sleep data from RDS MySQL (with optional date filtering)
-- `get_exercise_data`: Retrieve exercise/workout data from RDS MySQL (with optional date filtering)
+### Data Retrieval Tools
 
-### Analysis Tools:
-- `get_patient_summary`: Retrieve patient glucose readings
-- `detect_anomalous_glucose_events`: Find statistical anomalies
-- `find_last_hypoglycemic_event`: Track hypo events
-- `analyze_glucose_patterns`: Pattern analysis
-- `get_live_cgm_data`: Real-time CGM readings
-- `get_cgm_monitoring_status`: System status
+1. **`get_glucose_data`**
+   - Retrieve glucose/blood glucose data from RDS MySQL
+   - Parameters: `start_date` (optional), `end_date` (optional), `limit` (optional, default: None = all records)
+   - Returns: Dictionary with `total_records`, `date_range`, `limit`, and `data` array
 
-## API Endpoints
+2. **`get_sleep_data`**
+   - Retrieve sleep data from RDS MySQL
+   - Parameters: `start_date` (optional), `end_date` (optional), `limit` (optional, default: None = all records)
+   - Returns: Dictionary with `total_records`, `date_range`, `limit`, and `data` array
 
-- `POST /health-data`: Receive CGM data from Health Auto Export
-- `GET /cgm-status`: Get current monitoring status 
-            
+3. **`get_exercise_data`**
+   - Retrieve exercise/workout data from RDS MySQL
+   - Parameters: `start_date` (optional), `end_date` (optional), `limit` (optional, default: None = all records)
+   - Returns: Dictionary with `total_records`, `date_range`, `limit`, and `data` array
+
+### Analysis Tools
+
+4. **`detect_patterns`**
+   - Detect patterns in diabetes data (glucose, sleep, exercise)
+   - Parameters: `start_date` (optional), `end_date` (optional), `pattern_type` (optional: "all", "glucose", "sleep", "exercise", "temporal")
+   - Returns: Dictionary with detected patterns including:
+     - **Glucose patterns**: Hourly averages, day-of-week averages, high/low glucose times, time-in-range by hour
+     - **Sleep patterns**: Average duration/efficiency, bedtime/wake time patterns, day-of-week patterns
+     - **Exercise patterns**: Frequency, timing patterns, duration patterns, day-of-week distribution
+
+5. **`find_correlations`**
+   - Find correlations between different health metrics
+   - Parameters: `start_date` (optional), `end_date` (optional), `correlation_type` (optional: "all", "exercise_glucose", "sleep_glucose", "sleep_exercise")
+   - Returns: Dictionary with correlation analysis including:
+     - **Exercise-Glucose correlation**: Correlation between exercise duration and average/max/min glucose levels
+     - **Sleep-Glucose correlation**: Correlation between sleep duration/efficiency and glucose levels
+     - **Sleep-Exercise correlation**: Correlation between exercise and sleep patterns
+     - All correlations include Pearson correlation coefficients and interpretations
+
+## Testing
+
+Run the test suite with pytest:
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=. --cov-report=html
+
+# Run specific test file
+pytest tests/test_mcp_tools.py -v
+```
+
+Test files:
+- `tests/test_database.py`: Database connection and table existence tests
+- `tests/test_mcp_tools.py`: MCP tool functionality tests
+
+## Usage Examples
+
+### Retrieve glucose data for a date range
+```python
+get_glucose_data(start_date="2025-01-01", end_date="2025-01-31", limit=100)
+```
+
+### Detect all patterns
+```python
+detect_patterns(start_date="2025-01-01", end_date="2025-01-31", pattern_type="all")
+```
+
+### Find exercise-glucose correlation
+```python
+find_correlations(start_date="2025-01-01", end_date="2025-01-31", correlation_type="exercise_glucose")
+```
+
+## Claude Desktop Configuration
+
+To use this server with Claude Desktop, add to your Claude Desktop configuration:
+
+```json
+{
+  "mcpServers": {
+    "diabetes-cgm": {
+      "command": "/Users/namanrastogi/anaconda3/bin/python",
+      "args": ["/path/to/MCP_diabetes/mcp_server.py"],
+      "env": {
+        "RDS_HOST": "your-rds-endpoint.region.rds.amazonaws.com",
+        "RDS_PORT": "3306",
+        "RDS_USER": "admin",
+        "RDS_PASSWORD": "your-password",
+        "RDS_DATABASE": "diabetes_cgm"
+      }
+    }
+  }
+}
+```
+
+## Dependencies
+
+- `mcp[cli]`: Model Context Protocol server framework
+- `pymysql>=1.1.0`: MySQL database connector
+- `python-dotenv>=1.0.0`: Environment variable management
+- `sqlalchemy>=2.0.0`: SQL toolkit and ORM
+- `pytest>=7.4.0`: Testing framework
+- `pytest-cov>=4.1.0`: Coverage reporting
+
+## Notes
+
+- All tools support optional date filtering (both `start_date` and `end_date` must be provided together)
+- Default `limit` is `None` (unlimited records)
+- Data is returned ordered by most recent first
+- Correlation analysis requires at least 3 overlapping data points
+- Pattern detection works with any amount of data available
