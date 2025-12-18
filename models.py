@@ -20,8 +20,6 @@ class BloodGlucose(Base):
     timestamp = Column(DateTime, nullable=False, index=True)
     value = Column(DECIMAL(6, 2), nullable=False)  # glucose value in mg/dL
     unit = Column(String(10))
-    source = Column(String(100))
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     
     def to_dict(self):
         """Convert to dictionary"""
@@ -31,8 +29,6 @@ class BloodGlucose(Base):
             'value': float(self.value) if self.value else None,
             'glucose_mg_dl': float(self.value) if self.value else None,  # Alias for compatibility
             'unit': self.unit,
-            'source': self.source,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 
