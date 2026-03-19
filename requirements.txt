@@ -2,5 +2,7 @@ mcp[cli]
 pymysql>=1.1.0
 python-dotenv>=1.0.0
 sqlalchemy>=2.0.0
+flask>=3.0.0
+flask-cors>=4.0.0
 pytest>=7.4.0
 pytest-cov>=4.1.0
