@@ -98,6 +98,26 @@ class ExerciseData(Base):
             'duration_hours': float(self.duration_minutes) / 60.0 if self.duration_minutes else None,
         }
 
+class AIInsight(Base):
+    """AI-generated health insights table"""
+    __tablename__ = 'ai_insights'
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    insight_type = Column(String(50), nullable=False)   # glucose/sleep/exercise/combined
+    week_start   = Column(Date, nullable=True)
+    content      = Column(Text, nullable=False)
+    created_at   = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    def to_dict(self):
+        return {
+            'id':           self.id,
+            'insight_type': self.insight_type,
+            'week_start':   str(self.week_start) if self.week_start else None,
+            'content':      self.content,
+            'created_at':   self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 # Create aliases for backward compatibility
 Glucose = BloodGlucose
 Sleep = SleepData

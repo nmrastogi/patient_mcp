@@ -23,7 +23,7 @@ class DatabaseConfig:
         self.port = int(os.getenv('RDS_PORT', '3306'))
         self.user = os.getenv('RDS_USER', 'admin')
         self.password = os.getenv('RDS_PASSWORD', '')
-        self.database = os.getenv('RDS_DATABASE', 'diabetes_cgm')
+        self.database = os.getenv('RDS_DATABASE', 'health_data')
         self.charset = 'utf8mb4'
         
         # Log configuration (without password)

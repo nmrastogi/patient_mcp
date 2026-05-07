@@ -12,9 +12,10 @@ REST API for Diabetes Health Data
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from datetime import datetime
+from datetime import datetime, timedelta
 from db_config import db_config
-from models import BloodGlucose, SleepData, ExerciseData
+from models import BloodGlucose, SleepData, ExerciseData, AIInsight
+from health_agent import chat as agent_chat, generate_insights as agent_generate_insights
 import logging
 import os
 
@@ -285,6 +286,181 @@ def health_check():
             'GET  /api/exercise': 'Read exercise data',
         }
     }), 200
+
+
+# ---------------------------------------------------------------------------
+# URL aliases — iOS calls these paths (no /api/ prefix)
+# ---------------------------------------------------------------------------
+
+@app.route('/glucose', methods=['GET'])
+def get_glucose_alias():
+    return get_glucose()
+
+@app.route('/sleep', methods=['GET'])
+def get_sleep_alias():
+    return get_sleep()
+
+@app.route('/exercise', methods=['GET'])
+def get_exercise_alias():
+    return get_exercise()
+
+@app.route('/glucose/ingest', methods=['POST'])
+def ingest_glucose_alias():
+    return receive_glucose()
+
+@app.route('/sleep/ingest', methods=['POST'])
+def ingest_sleep_alias():
+    return receive_sleep()
+
+@app.route('/exercise/ingest', methods=['POST'])
+def ingest_exercise_alias():
+    return receive_exercise()
+
+
+# ---------------------------------------------------------------------------
+# AI Agent endpoints
+# ---------------------------------------------------------------------------
+
+@app.route('/chat', methods=['POST'])
+def chat_endpoint():
+    """Run Claude AI agent to answer a health question."""
+    data = request.get_json() or {}
+    question = data.get('question', '').strip()
+    if not question:
+        return jsonify({'status': 'error', 'message': 'question is required'}), 400
+    result = agent_chat(question, conversation_history=data.get('history', []))
+    return jsonify(result), 200
+
+
+@app.route('/insights', methods=['GET'])
+def get_insights():
+    """Return stored AI insights, newest first."""
+    limit = _parse_int(request.args.get('limit')) or 20
+    session = db_config.get_session()
+    try:
+        rows = (session.query(AIInsight)
+                .order_by(AIInsight.created_at.desc())
+                .limit(limit)
+                .all())
+        data = [r.to_dict() for r in rows]
+    finally:
+        session.close()
+    return jsonify({'status': 'success', 'total': len(data), 'data': data}), 200
+
+
+@app.route('/insights/generate', methods=['POST'])
+def generate_insights_endpoint():
+    """Trigger Claude agent to generate weekly insights and store them."""
+    raw = agent_generate_insights()
+    session = db_config.get_session()
+    try:
+        for item in raw:
+            session.add(AIInsight(
+                insight_type=item['insight_type'],
+                week_start=(datetime.strptime(item['week_start'], '%Y-%m-%d').date()
+                            if item.get('week_start') else None),
+                content=item['content'],
+            ))
+        session.commit()
+    finally:
+        session.close()
+    return jsonify({'status': 'success', 'generated': len(raw), 'data': raw}), 200
+
+
+@app.route('/dashboard', methods=['GET'])
+def get_dashboard():
+    """Return aggregated health summary for the last N days."""
+    days = _parse_int(request.args.get('days')) or 7
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(days=days)
+    session = db_config.get_session()
+    try:
+        glucose_vals = [
+            float(r.value) for r in
+            session.query(BloodGlucose)
+            .filter(BloodGlucose.timestamp >= start_dt, BloodGlucose.timestamp <= end_dt)
+            .all() if r.value
+        ]
+        sleep_mins = [
+            r.sleep_duration_minutes for r in
+            session.query(SleepData)
+            .filter(SleepData.date >= start_dt.date(), SleepData.date <= end_dt.date())
+            .all() if r.sleep_duration_minutes
+        ]
+        exercise_total = sum(
+            r.duration_minutes for r in
+            session.query(ExerciseData)
+            .filter(ExerciseData.timestamp >= start_dt, ExerciseData.timestamp <= end_dt)
+            .all() if r.duration_minutes
+        )
+    finally:
+        session.close()
+
+    avg_glucose   = round(sum(glucose_vals) / len(glucose_vals), 1) if glucose_vals else None
+    in_range      = sum(1 for v in glucose_vals if 70 <= v <= 180)
+    time_in_range = round(in_range / len(glucose_vals) * 100, 1) if glucose_vals else None
+    avg_sleep     = round(sum(sleep_mins) / len(sleep_mins) / 60.0, 2) if sleep_mins else None
+
+    return jsonify({
+        'avg_glucose':            avg_glucose,
+        'time_in_range':          time_in_range,
+        'avg_sleep_hours':        avg_sleep,
+        'total_exercise_minutes': exercise_total or None,
+        'period_days':            days,
+        'status':                 'success',
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# Lambda entry point — custom zero-dependency WSGI adapter for API Gateway
+# ---------------------------------------------------------------------------
+
+import io as _io
+import base64 as _base64
+
+
+def handler(event, context):
+    """AWS Lambda handler for API Gateway HTTP API (payload format 2.0)."""
+    http    = event.get('requestContext', {}).get('http', {})
+    method  = http.get('method', 'GET')
+    path    = event.get('rawPath', '/')
+    query   = event.get('rawQueryString', '') or ''
+    headers = event.get('headers', {}) or {}
+    body    = event.get('body', '') or ''
+
+    if event.get('isBase64Encoded'):
+        body = _base64.b64decode(body)
+    elif isinstance(body, str):
+        body = body.encode('utf-8')
+
+    environ = {
+        'REQUEST_METHOD':    method,
+        'PATH_INFO':         path,
+        'QUERY_STRING':      query,
+        'CONTENT_TYPE':      headers.get('content-type', ''),
+        'CONTENT_LENGTH':    str(len(body)),
+        'wsgi.input':        _io.BytesIO(body),
+        'wsgi.errors':       __import__('sys').stderr,
+        'wsgi.url_scheme':   'https',
+        'wsgi.multithread':  False,
+        'wsgi.multiprocess': False,
+        'wsgi.run_once':     False,
+        'SERVER_NAME':       'lambda',
+        'SERVER_PORT':       '443',
+        'SERVER_PROTOCOL':   'HTTP/1.1',
+    }
+    for k, v in headers.items():
+        environ[f'HTTP_{k.upper().replace("-", "_")}'] = v
+
+    response = {'statusCode': 500, 'headers': {}, 'body': ''}
+
+    def start_response(status, response_headers, exc_info=None):
+        response['statusCode'] = int(status.split(' ', 1)[0])
+        response['headers'] = dict(response_headers)
+
+    result = app(environ, start_response)
+    response['body'] = b''.join(result).decode('utf-8')
+    return response
 
 
 if __name__ == '__main__':
