@@ -36,6 +36,13 @@ Glucose target: 70-180 mg/dL. Sleep goal: 7-9 h/night. Exercise: >=150 min/week.
 Today: {today}. All glucose values are in mg/dL.
 TIMEZONE: All timestamps stored in the database are in UTC. The user lives in US/Pacific time (PDT = UTC-7, Mar–Nov; PST = UTC-8, Nov–Mar). Always convert and display times in Pacific time when presenting results."""
 
+# Separate prompt for insight generation — no tool calls, data is embedded in the user message
+INSIGHT_SYSTEM_PROMPT = """You are an empathetic diabetes health assistant.
+Generate clear, concise insights based solely on the data provided in the message — do not attempt to fetch additional data.
+Glucose target: 70-180 mg/dL. Sleep goal: 7-9 h/night. Exercise: >=150 min/week.
+Today: {today}. The user lives in US/Pacific time.
+Be direct and empathetic — 2-4 sentences only."""
+
 TOOL_DEFINITIONS = [
     {
         "name": "get_glucose_data",
@@ -274,35 +281,39 @@ def _call_claude_simple(prompt: str, system: str) -> str:
 def generate_insights() -> list:
     today      = date.today()
     week_start = (today - timedelta(days=today.weekday())).isoformat()
-    system     = SYSTEM_PROMPT.format(today=today.isoformat())
+    system     = INSIGHT_SYSTEM_PROMPT.format(today=today.isoformat())
 
     try:
-        data = _fetch_summaries(today)
-    except Exception as e:
-        logger.error(f"Failed to fetch summaries for insights: {e}", exc_info=True)
+        summaries = _fetch_summaries(today)
+    except Exception as err:
+        logger.error(f"Failed to fetch summaries for insights: {err}", exc_info=True)
         return []
 
-    g, s, e = data["glucose"], data["sleep"], data["exercise"]
+    glu  = summaries["glucose"]
+    slp  = summaries["sleep"]
+    exr  = summaries["exercise"]
+
+    logger.info(f"Summaries — glucose: {glu}, sleep: {slp}, exercise: {exr}")
 
     prompts = {
         "glucose": (
-            f"Glucose data for the week of {week_start}:\n{json.dumps(g)}\n\n"
+            f"Glucose data for the week of {week_start}:\n{json.dumps(glu)}\n\n"
             "Write a 2-4 sentence glucose insight. Include average mg/dL, time-in-range %, "
             "and flag any concerning highs or lows."
         ),
         "sleep": (
-            f"Sleep data for the past 2 weeks:\n{json.dumps(s)}\n\n"
+            f"Sleep data for the past 2 weeks:\n{json.dumps(slp)}\n\n"
             "Write a 2-4 sentence sleep insight. Compare the average to the 7-9h goal "
             "and highlight the best and worst nights by date."
         ),
         "exercise": (
-            f"Exercise data for the past 2 weeks:\n{json.dumps(e)}\n\n"
+            f"Exercise data for the past 2 weeks:\n{json.dumps(exr)}\n\n"
             "Write a 2-4 sentence exercise insight. Compare total weekly minutes to the "
             "150 min/week goal and comment on session frequency."
         ),
         "combined": (
             f"Health summary for the week of {week_start}:\n"
-            f"Glucose: {json.dumps(g)}\nSleep: {json.dumps(s)}\nExercise: {json.dumps(e)}\n\n"
+            f"Glucose: {json.dumps(glu)}\nSleep: {json.dumps(slp)}\nExercise: {json.dumps(exr)}\n\n"
             "Write a 2-4 sentence combined health insight with one specific, actionable recommendation."
         ),
     }
@@ -318,7 +329,9 @@ def generate_insights() -> list:
                     "content":      content,
                 })
                 logger.info(f"✅ Generated {insight_type} insight")
-        except Exception as e:
-            logger.error(f"Failed to generate {insight_type} insight: {e}", exc_info=True)
+            else:
+                logger.warning(f"⚠️  Empty response from Claude for {insight_type} insight")
+        except Exception as err:
+            logger.error(f"Failed to generate {insight_type} insight: {err}", exc_info=True)
 
     return insights

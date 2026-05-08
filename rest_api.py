@@ -369,6 +369,7 @@ def generate_insights_endpoint():
     raw = agent_generate_insights()
     session = db_config.get_session()
     try:
+        session.query(AIInsight).delete()
         for item in raw:
             session.add(AIInsight(
                 insight_type=item['insight_type'],
