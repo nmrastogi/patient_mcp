@@ -77,10 +77,15 @@ def receive_glucose():
 
         session = db_config.get_session()
         try:
+            from sqlalchemy import text
+            sql = text("""
+                INSERT IGNORE INTO blood_glucose (timestamp, value, unit)
+                VALUES (:timestamp, :value, :unit)
+            """)
             for r in records:
-                session.merge(r)
+                session.execute(sql, {'timestamp': r.timestamp, 'value': float(r.value), 'unit': r.unit})
             session.commit()
-            logger.info(f"✅ Saved {len(records)} glucose records")
+            logger.info(f"✅ Saved {len(records)} glucose records (duplicates silently skipped)")
             return jsonify({'status': 'success', 'saved': len(records)}), 200
         finally:
             session.close()
@@ -105,17 +110,20 @@ def receive_sleep():
                     if not date_str:
                         continue
 
-                    bedtime_str = item.get('inBedStart')
-                    wake_str = item.get('inBedEnd')
+                    # Accept both camelCase (iOS default) and snake_case
+                    bedtime_str = item.get('inBedStart') or item.get('in_bed_start')
+                    wake_str    = item.get('inBedEnd')   or item.get('in_bed_end')
+                    total_sleep = item.get('totalSleep') or item.get('total_sleep')
 
                     records.append(SleepData(
                         date=datetime.strptime(date_str, '%Y-%m-%d').date(),
                         bedtime=datetime.fromisoformat(bedtime_str) if bedtime_str else None,
                         wake_time=datetime.fromisoformat(wake_str) if wake_str else None,
-                        sleep_duration_minutes=_parse_int(item.get('totalSleep', 0) * 60) if item.get('totalSleep') else None,
-                        deep_sleep_minutes=_parse_int(item.get('deep', 0) * 60) if item.get('deep') else None,
-                        light_sleep_minutes=_parse_int(item.get('core', 0) * 60) if item.get('core') else None,
-                        rem_sleep_minutes=_parse_int(item.get('rem', 0) * 60) if item.get('rem') else None,
+                        # iOS sends minutes — do NOT multiply by 60
+                        sleep_duration_minutes=_parse_int(total_sleep) if total_sleep else None,
+                        deep_sleep_minutes=_parse_int(item.get('deep')) if item.get('deep') else None,
+                        light_sleep_minutes=_parse_int(item.get('core')) if item.get('core') else None,
+                        rem_sleep_minutes=_parse_int(item.get('rem')) if item.get('rem') else None,
                     ))
 
         if not records:
@@ -124,9 +132,18 @@ def receive_sleep():
         session = db_config.get_session()
         try:
             for r in records:
-                session.merge(r)
+                existing = session.query(SleepData).filter_by(date=r.date).first()
+                if existing:
+                    existing.sleep_duration_minutes = r.sleep_duration_minutes
+                    existing.deep_sleep_minutes     = r.deep_sleep_minutes
+                    existing.light_sleep_minutes    = r.light_sleep_minutes
+                    existing.rem_sleep_minutes      = r.rem_sleep_minutes
+                    if r.bedtime:   existing.bedtime    = r.bedtime
+                    if r.wake_time: existing.wake_time  = r.wake_time
+                else:
+                    session.add(r)
             session.commit()
-            logger.info(f"✅ Saved {len(records)} sleep records")
+            logger.info(f"✅ Saved/updated {len(records)} sleep records")
             return jsonify({'status': 'success', 'saved': len(records)}), 200
         finally:
             session.close()
@@ -152,15 +169,9 @@ def receive_exercise():
                     timestamp = w.get('start')
                     if not timestamp:
                         continue
-                    calories = _parse_float(
-                        w.get('activeEnergyBurned', {}).get('qty') if isinstance(w.get('activeEnergyBurned'), dict) else w.get('activeEnergyBurned')
-                    )
                     records.append(ExerciseData(
                         timestamp=datetime.fromisoformat(timestamp),
-                        activity_type=w.get('workoutName') or w.get('workoutActivityType'),
                         duration_minutes=_parse_int(w.get('duration')),
-                        calories_burned=calories,
-                        active_energy_kcal=calories,
                     ))
 
             # Metrics format (apple_exercise_time)
@@ -172,7 +183,6 @@ def receive_exercise():
                             continue
                         records.append(ExerciseData(
                             timestamp=datetime.fromisoformat(timestamp),
-                            activity_type='Exercise',
                             duration_minutes=_parse_int(item.get('qty')),
                         ))
 
@@ -181,10 +191,15 @@ def receive_exercise():
 
         session = db_config.get_session()
         try:
+            from sqlalchemy import text
+            sql = text("""
+                INSERT IGNORE INTO exercise_data (timestamp, duration_minutes)
+                VALUES (:timestamp, :duration)
+            """)
             for r in records:
-                session.merge(r)
+                session.execute(sql, {'timestamp': r.timestamp, 'duration': r.duration_minutes})
             session.commit()
-            logger.info(f"✅ Saved {len(records)} exercise records")
+            logger.info(f"✅ Saved {len(records)} exercise records (duplicates silently skipped)")
             return jsonify({'status': 'success', 'saved': len(records)}), 200
         finally:
             session.close()

@@ -38,8 +38,8 @@ class SleepData(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     date = Column(Date, nullable=False, index=True)
-    bedtime = Column(DateTime, nullable=False)
-    wake_time = Column(DateTime, nullable=False)
+    bedtime = Column(DateTime, nullable=True)
+    wake_time = Column(DateTime, nullable=True)
     sleep_duration_minutes = Column(Integer)
     deep_sleep_minutes = Column(Integer)
     light_sleep_minutes = Column(Integer)
