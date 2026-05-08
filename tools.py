@@ -6,13 +6,54 @@ so it runs cleanly on AWS Lambda.
 """
 from db_config import db_config
 from models import Glucose, Sleep, Exercise
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Type
 from sqlalchemy.orm import Query
 from collections import defaultdict, Counter
 from statistics import mean
 import logging
 import math
+
+try:
+    from zoneinfo import ZoneInfo
+    _PACIFIC = ZoneInfo("America/Los_Angeles")
+    def _to_pacific(dt: datetime) -> str:
+        if dt is None:
+            return None
+        utc = dt.replace(tzinfo=timezone.utc)
+        return utc.astimezone(_PACIFIC).strftime("%Y-%m-%d %H:%M %Z")
+    def _str_to_pacific(s: str) -> str:
+        if not s:
+            return s
+        try:
+            return _to_pacific(datetime.fromisoformat(s))
+        except Exception:
+            return s
+except Exception:
+    def _to_pacific(dt: datetime) -> str:
+        if dt is None:
+            return None
+        return (dt - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M PDT")
+    def _str_to_pacific(s: str) -> str:
+        if not s:
+            return s
+        try:
+            dt = datetime.fromisoformat(s)
+            return (dt - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M PDT")
+        except Exception:
+            return s
+
+# Fields in to_dict() output that hold UTC datetime strings and need conversion
+_UTC_DATETIME_FIELDS = {
+    'timestamp', 'bedtime', 'wake_time', 'start_time', 'end_time', 'created_at', 'updated_at'
+}
+
+def _localize(record: dict) -> dict:
+    """Convert UTC datetime strings to Pacific time in a to_dict() record."""
+    return {
+        k: _str_to_pacific(v) if k in _UTC_DATETIME_FIELDS and isinstance(v, str) else v
+        for k, v in record.items()
+    }
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +119,7 @@ def _get_data_generic(model_class, table_name, order_by_field,
         order_field = getattr(model_class, order_by_field)
         query = query.order_by(order_field.desc())
         results = query.limit(limit).all() if limit is not None else query.all()
-        data = [r.to_dict() for r in results]
+        data = [_localize(r.to_dict()) for r in results]
         return {
             "table": table_name,
             "total_records": len(data),
@@ -212,9 +253,9 @@ def _detect_glucose_patterns(records):
         if 70 <= v <= 180:
             tir[h]["in_range"] += 1
         if v > 180:
-            highs.append({"timestamp": r.timestamp.isoformat(), "value": v, "hour": h})
+            highs.append({"timestamp_pt": _to_pacific(r.timestamp), "value": v, "hour_utc": h})
         if v < 70:
-            lows.append({"timestamp": r.timestamp.isoformat(), "value": v, "hour": h})
+            lows.append({"timestamp_pt": _to_pacific(r.timestamp), "value": v, "hour_utc": h})
     return {
         "hourly_averages": {h: {"average": round(mean(vs), 2), "count": len(vs)} for h, vs in hourly.items()},
         "day_of_week_averages": {d: {"average": round(mean(vs), 2), "count": len(vs)} for d, vs in dow.items()},
@@ -234,9 +275,12 @@ def _detect_sleep_patterns(records):
         if r.sleep_efficiency:
             efficiencies.append(float(r.sleep_efficiency))
         if r.bedtime:
-            bedtime_hours[r.bedtime.hour] += 1
+            # Convert UTC bedtime to Pacific before bucketing by hour
+            pt_bedtime = r.bedtime - timedelta(hours=7)  # approximate PDT
+            bedtime_hours[pt_bedtime.hour] += 1
         if r.wake_time:
-            wake_hours[r.wake_time.hour] += 1
+            pt_wake = r.wake_time - timedelta(hours=7)
+            wake_hours[pt_wake.hour] += 1
         if r.date and r.sleep_duration_minutes:
             dow[r.date.strftime("%A")].append(r.sleep_duration_minutes)
     return {

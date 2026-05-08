@@ -10,7 +10,8 @@ import json
 import logging
 import urllib.request
 import urllib.error
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from statistics import mean
 from typing import Optional
 
 from tools import (
@@ -32,7 +33,8 @@ SYSTEM_PROMPT = """You are an empathetic diabetes health assistant.
 You have access to the user's health data via tools — always fetch data before answering, never guess or fabricate values.
 Flag any glucose readings outside the safe range (70-180 mg/dL) explicitly.
 Glucose target: 70-180 mg/dL. Sleep goal: 7-9 h/night. Exercise: >=150 min/week.
-Today: {today}. All glucose values are in mg/dL."""
+Today: {today}. All glucose values are in mg/dL.
+TIMEZONE: All timestamps stored in the database are in UTC. The user lives in US/Pacific time (PDT = UTC-7, Mar–Nov; PST = UTC-8, Nov–Mar). Always convert and display times in Pacific time when presenting results."""
 
 TOOL_DEFINITIONS = [
     {
@@ -190,28 +192,133 @@ def chat(question: str, conversation_history: Optional[list] = None) -> dict:
         return {"answer": "An error occurred. Please try again.", "tools_used": [], "status": "error"}
 
 
+def _fetch_summaries(today: date) -> dict:
+    """Fetch and aggregate health data directly from DB — no Claude tool calls needed."""
+    from db_config import db_config
+    from models import BloodGlucose, SleepData, ExerciseData
+
+    week_start_dt  = today - timedelta(days=today.weekday())
+    two_weeks_ago  = today - timedelta(days=14)
+
+    session = db_config.get_session()
+    try:
+        # Glucose: current week
+        g_recs = session.query(BloodGlucose).filter(
+            BloodGlucose.timestamp >= datetime.combine(week_start_dt, datetime.min.time())
+        ).all()
+        g_vals = [float(r.value) for r in g_recs if r.value]
+        glucose = {
+            "period": f"{week_start_dt} to {today}",
+            "readings": len(g_vals),
+            "avg_mg_dl": round(mean(g_vals), 1) if g_vals else None,
+            "time_in_range_pct": round(
+                sum(1 for v in g_vals if 70 <= v <= 180) / len(g_vals) * 100, 1
+            ) if g_vals else None,
+            "min_mg_dl": round(min(g_vals), 1) if g_vals else None,
+            "max_mg_dl": round(max(g_vals), 1) if g_vals else None,
+        }
+
+        # Sleep: past 2 weeks
+        s_recs = session.query(SleepData).filter(
+            SleepData.date >= two_weeks_ago
+        ).order_by(SleepData.date.asc()).all()
+        s_mins = [r.sleep_duration_minutes for r in s_recs if r.sleep_duration_minutes]
+        sleep = {
+            "period": f"{two_weeks_ago} to {today}",
+            "nights_recorded": len(s_mins),
+            "avg_hours": round(mean(s_mins) / 60.0, 1) if s_mins else None,
+            "goal_hours": 7.5,
+            "nightly": [
+                {"date": str(r.date), "hours": round(r.sleep_duration_minutes / 60.0, 1)}
+                for r in s_recs if r.sleep_duration_minutes
+            ],
+        }
+
+        # Exercise: past 2 weeks, sessions > 10 min only
+        e_recs = session.query(ExerciseData).filter(
+            ExerciseData.timestamp >= datetime.combine(two_weeks_ago, datetime.min.time()),
+            ExerciseData.duration_minutes > 10,
+        ).order_by(ExerciseData.timestamp.asc()).all()
+        e_mins = [r.duration_minutes for r in e_recs if r.duration_minutes]
+        exercise = {
+            "period": f"{two_weeks_ago} to {today}",
+            "sessions": len(e_mins),
+            "total_minutes": sum(e_mins),
+            "avg_minutes_per_session": round(mean(e_mins), 1) if e_mins else None,
+            "goal_minutes_per_week": 150,
+        }
+
+        return {"glucose": glucose, "sleep": sleep, "exercise": exercise}
+    finally:
+        session.close()
+
+
+def _call_claude_simple(prompt: str, system: str) -> str:
+    """Single Claude call with no tools — just text generation."""
+    payload = json.dumps({
+        "model":      MODEL,
+        "max_tokens": 512,
+        "system":     system,
+        "messages":   [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+    req = urllib.request.Request(ANTHROPIC_API_URL, data=payload, method="POST")
+    req.add_header("x-api-key",         os.environ["ANTHROPIC_API_KEY"])
+    req.add_header("anthropic-version", "2023-06-01")
+    req.add_header("content-type",      "application/json")
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        response = json.loads(resp.read().decode("utf-8"))
+    text_blocks = [b["text"] for b in response.get("content", []) if b.get("type") == "text"]
+    return "\n".join(text_blocks).strip()
+
+
 def generate_insights() -> list:
     today      = date.today()
     week_start = (today - timedelta(days=today.weekday())).isoformat()
     system     = SYSTEM_PROMPT.format(today=today.isoformat())
 
+    try:
+        data = _fetch_summaries(today)
+    except Exception as e:
+        logger.error(f"Failed to fetch summaries for insights: {e}", exc_info=True)
+        return []
+
+    g, s, e = data["glucose"], data["sleep"], data["exercise"]
+
     prompts = {
-        "glucose":  f"Generate a 2-4 sentence weekly glucose insight for the week of {week_start}. Fetch data, compute average and time-in-range %, note highs/lows.",
-        "sleep":    f"Generate a 2-4 sentence weekly sleep insight for the week of {week_start}. Fetch data, avg duration vs 7-9h goal, best/worst nights.",
-        "exercise": f"Generate a 2-4 sentence weekly exercise insight for the week of {week_start}. Fetch data, total minutes vs 150 min/week goal, frequency.",
-        "combined": f"Generate a 2-4 sentence combined health insight for the week of {week_start}. Find correlations, give the single most actionable recommendation.",
+        "glucose": (
+            f"Glucose data for the week of {week_start}:\n{json.dumps(g)}\n\n"
+            "Write a 2-4 sentence glucose insight. Include average mg/dL, time-in-range %, "
+            "and flag any concerning highs or lows."
+        ),
+        "sleep": (
+            f"Sleep data for the past 2 weeks:\n{json.dumps(s)}\n\n"
+            "Write a 2-4 sentence sleep insight. Compare the average to the 7-9h goal "
+            "and highlight the best and worst nights by date."
+        ),
+        "exercise": (
+            f"Exercise data for the past 2 weeks:\n{json.dumps(e)}\n\n"
+            "Write a 2-4 sentence exercise insight. Compare total weekly minutes to the "
+            "150 min/week goal and comment on session frequency."
+        ),
+        "combined": (
+            f"Health summary for the week of {week_start}:\n"
+            f"Glucose: {json.dumps(g)}\nSleep: {json.dumps(s)}\nExercise: {json.dumps(e)}\n\n"
+            "Write a 2-4 sentence combined health insight with one specific, actionable recommendation."
+        ),
     }
 
     insights = []
     for insight_type, prompt in prompts.items():
         try:
-            content, _ = _run_agent_loop([{"role": "user", "content": prompt}], system)
-            insights.append({
-                "insight_type": insight_type,
-                "week_start":   week_start,
-                "content":      content.strip(),
-            })
+            content = _call_claude_simple(prompt, system)
+            if content:
+                insights.append({
+                    "insight_type": insight_type,
+                    "week_start":   week_start,
+                    "content":      content,
+                })
+                logger.info(f"✅ Generated {insight_type} insight")
         except Exception as e:
-            logger.error(f"Failed to generate {insight_type} insight: {e}")
+            logger.error(f"Failed to generate {insight_type} insight: {e}", exc_info=True)
 
     return insights
