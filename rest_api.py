@@ -406,7 +406,7 @@ def get_dashboard():
             r.duration_minutes for r in
             session.query(ExerciseData)
             .filter(ExerciseData.timestamp >= start_dt, ExerciseData.timestamp <= end_dt)
-            .all() if r.duration_minutes
+            .all() if r.duration_minutes and r.duration_minutes > 10
         )
     finally:
         session.close()
