@@ -34,14 +34,9 @@ You have access to the user's health data via tools — always fetch data before
 Flag any glucose readings outside the safe range (70-180 mg/dL) explicitly.
 Glucose target: 70-180 mg/dL. Sleep goal: 7-9 h/night. Exercise: >=150 min/week.
 Today: {today}. All glucose values are in mg/dL.
-TIMEZONE: All timestamps stored in the database are in UTC. The user lives in US/Pacific time (PDT = UTC-7, Mar–Nov; PST = UTC-8, Nov–Mar). Always convert and display times in Pacific time when presenting results."""
+TIMEZONE: All timestamps stored in the database are in UTC. The user lives in US/Pacific time (PDT = UTC-7, Mar–Nov; PST = UTC-8, Nov–Mar). Always convert and display times in Pacific time when presenting results.
+Be concise — 2-4 sentences max per response. Lead with the key number or finding."""
 
-# Separate prompt for insight generation — no tool calls, data is embedded in the user message
-INSIGHT_SYSTEM_PROMPT = """You are an empathetic diabetes health assistant.
-Generate clear, concise insights based solely on the data provided in the message — do not attempt to fetch additional data.
-Glucose target: 70-180 mg/dL. Sleep goal: 7-9 h/night. Exercise: >=150 min/week.
-Today: {today}. The user lives in US/Pacific time.
-Be direct and empathetic — 2-4 sentences only."""
 
 TOOL_DEFINITIONS = [
     {
@@ -199,6 +194,53 @@ def chat(question: str, conversation_history: Optional[list] = None) -> dict:
         return {"answer": "An error occurred. Please try again.", "tools_used": [], "status": "error"}
 
 
+def generate_insights() -> list:
+    today      = date.today()
+    week_start = (today - timedelta(days=today.weekday())).isoformat()
+    two_weeks_ago = (today - timedelta(days=14)).isoformat()
+    system     = SYSTEM_PROMPT.format(today=today.isoformat())
+
+    INSIGHT_PROMPTS = {
+        "glucose": (
+            f"Use tools to fetch glucose readings since {week_start}. "
+            "Then write a 2-4 sentence glucose insight covering average mg/dL, "
+            "time-in-range %, and any concerning highs or lows."
+        ),
+        "sleep": (
+            f"Use tools to fetch sleep data since {two_weeks_ago}. "
+            "Then write a 2-4 sentence sleep insight comparing average hours to the 7-9h goal "
+            "and highlighting the best and worst nights."
+        ),
+        "exercise": (
+            f"Use tools to fetch exercise data since {two_weeks_ago}. "
+            "Then write a 2-4 sentence exercise insight comparing total minutes to the 150 min/week goal "
+            "and commenting on session frequency."
+        ),
+        "combined": (
+            f"Use tools to fetch glucose, sleep, and exercise data since {two_weeks_ago}. "
+            "Then write a 2-4 sentence combined health insight with one specific actionable recommendation."
+        ),
+    }
+
+    insights = []
+    for insight_type, prompt in INSIGHT_PROMPTS.items():
+        try:
+            answer, _ = _run_agent_loop(
+                [{"role": "user", "content": prompt}], system
+            )
+            if answer:
+                insights.append({
+                    "insight_type": insight_type,
+                    "week_start":   week_start,
+                    "content":      answer,
+                })
+                logger.info(f"✅ Generated {insight_type} insight")
+        except Exception as err:
+            logger.error(f"Failed to generate {insight_type} insight: {err}", exc_info=True)
+
+    return insights
+
+
 def _fetch_summaries(today: date) -> dict:
     """Fetch and aggregate health data directly from DB — no Claude tool calls needed."""
     from db_config import db_config
@@ -260,78 +302,3 @@ def _fetch_summaries(today: date) -> dict:
         session.close()
 
 
-def _call_claude_simple(prompt: str, system: str) -> str:
-    """Single Claude call with no tools — just text generation."""
-    payload = json.dumps({
-        "model":      MODEL,
-        "max_tokens": 512,
-        "system":     system,
-        "messages":   [{"role": "user", "content": prompt}],
-    }).encode("utf-8")
-    req = urllib.request.Request(ANTHROPIC_API_URL, data=payload, method="POST")
-    req.add_header("x-api-key",         os.environ["ANTHROPIC_API_KEY"])
-    req.add_header("anthropic-version", "2023-06-01")
-    req.add_header("content-type",      "application/json")
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        response = json.loads(resp.read().decode("utf-8"))
-    text_blocks = [b["text"] for b in response.get("content", []) if b.get("type") == "text"]
-    return "\n".join(text_blocks).strip()
-
-
-def generate_insights() -> list:
-    today      = date.today()
-    week_start = (today - timedelta(days=today.weekday())).isoformat()
-    system     = INSIGHT_SYSTEM_PROMPT.format(today=today.isoformat())
-
-    try:
-        summaries = _fetch_summaries(today)
-    except Exception as err:
-        logger.error(f"Failed to fetch summaries for insights: {err}", exc_info=True)
-        return []
-
-    glu  = summaries["glucose"]
-    slp  = summaries["sleep"]
-    exr  = summaries["exercise"]
-
-    logger.info(f"Summaries — glucose: {glu}, sleep: {slp}, exercise: {exr}")
-
-    prompts = {
-        "glucose": (
-            f"Glucose data for the week of {week_start}:\n{json.dumps(glu)}\n\n"
-            "Write a 2-4 sentence glucose insight. Include average mg/dL, time-in-range %, "
-            "and flag any concerning highs or lows."
-        ),
-        "sleep": (
-            f"Sleep data for the past 2 weeks:\n{json.dumps(slp)}\n\n"
-            "Write a 2-4 sentence sleep insight. Compare the average to the 7-9h goal "
-            "and highlight the best and worst nights by date."
-        ),
-        "exercise": (
-            f"Exercise data for the past 2 weeks:\n{json.dumps(exr)}\n\n"
-            "Write a 2-4 sentence exercise insight. Compare total weekly minutes to the "
-            "150 min/week goal and comment on session frequency."
-        ),
-        "combined": (
-            f"Health summary for the week of {week_start}:\n"
-            f"Glucose: {json.dumps(glu)}\nSleep: {json.dumps(slp)}\nExercise: {json.dumps(exr)}\n\n"
-            "Write a 2-4 sentence combined health insight with one specific, actionable recommendation."
-        ),
-    }
-
-    insights = []
-    for insight_type, prompt in prompts.items():
-        try:
-            content = _call_claude_simple(prompt, system)
-            if content:
-                insights.append({
-                    "insight_type": insight_type,
-                    "week_start":   week_start,
-                    "content":      content,
-                })
-                logger.info(f"✅ Generated {insight_type} insight")
-            else:
-                logger.warning(f"⚠️  Empty response from Claude for {insight_type} insight")
-        except Exception as err:
-            logger.error(f"Failed to generate {insight_type} insight: {err}", exc_info=True)
-
-    return insights

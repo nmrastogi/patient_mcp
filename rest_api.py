@@ -13,6 +13,7 @@ REST API for Diabetes Health Data
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
+from sqlalchemy import func
 from db_config import db_config
 from models import BloodGlucose, SleepData, ExerciseData, AIInsight
 from health_agent import chat as agent_chat, generate_insights as agent_generate_insights
@@ -409,6 +410,8 @@ def get_dashboard():
             .filter(ExerciseData.timestamp >= start_dt, ExerciseData.timestamp <= end_dt)
             .all() if r.duration_minutes and r.duration_minutes > 10
         )
+        data_oldest = session.query(func.min(BloodGlucose.timestamp)).scalar()
+        data_latest = session.query(func.max(BloodGlucose.timestamp)).scalar()
     finally:
         session.close()
 
@@ -423,6 +426,8 @@ def get_dashboard():
         'avg_sleep_hours':        avg_sleep,
         'total_exercise_minutes': exercise_total or None,
         'period_days':            days,
+        'data_start':             data_oldest.isoformat() if data_oldest else None,
+        'data_end':               data_latest.isoformat() if data_latest else None,
         'status':                 'success',
     }), 200
 

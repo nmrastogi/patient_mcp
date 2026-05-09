@@ -118,13 +118,14 @@ def _get_data_generic(model_class, table_name, order_by_field,
             return err
         order_field = getattr(model_class, order_by_field)
         query = query.order_by(order_field.desc())
-        results = query.limit(limit).all() if limit is not None else query.all()
+        effective_limit = min(limit, 500) if limit is not None else 200
+        results = query.limit(effective_limit).all()
         data = [_localize(r.to_dict()) for r in results]
         return {
             "table": table_name,
             "total_records": len(data),
             "date_range": f"{start_date} to {end_date}" if start_date and end_date else "all dates",
-            "limit": limit if limit is not None else "unlimited",
+            "limit": effective_limit,
             "data": data,
         }
     except Exception as e:
@@ -259,8 +260,8 @@ def _detect_glucose_patterns(records):
     return {
         "hourly_averages": {h: {"average": round(mean(vs), 2), "count": len(vs)} for h, vs in hourly.items()},
         "day_of_week_averages": {d: {"average": round(mean(vs), 2), "count": len(vs)} for d, vs in dow.items()},
-        "high_glucose_times": [{"hour": h, "count": c} for h, c in Counter(p["hour"] for p in highs).most_common(5)],
-        "low_glucose_times": [{"hour": h, "count": c} for h, c in Counter(p["hour"] for p in lows).most_common(5)],
+        "high_glucose_times": [{"hour": h, "count": c} for h, c in Counter(p["hour_utc"] for p in highs).most_common(5)],
+        "low_glucose_times": [{"hour": h, "count": c} for h, c in Counter(p["hour_utc"] for p in lows).most_common(5)],
         "time_in_range_by_hour": {h: {"percentage": round(d["in_range"] / d["total"] * 100, 2), "total_readings": d["total"]} for h, d in tir.items() if d["total"] > 0},
     }
 
